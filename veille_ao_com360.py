@@ -179,12 +179,14 @@ TED_URL = "https://api.ted.europa.eu/v3/notices/search"
 
 
 def _txt(v):
-    """Les champs TED sont souvent des dicts multilingues ou des listes."""
+    """Les champs TED sont des dicts multilingues, des listes, ou les deux imbriques."""
     if isinstance(v, dict):
-        return v.get("fra") or v.get("FRA") or next(iter(v.values()), "") if v else ""
+        if not v:
+            return ""
+        return _txt(v.get("fra") or v.get("FRA") or next(iter(v.values())))
     if isinstance(v, list):
         return _txt(v[0]) if v else ""
-    return v or ""
+    return "" if v is None else str(v)
 
 
 def source_ted(jours: int):
@@ -325,7 +327,7 @@ def exporter(annonces):
 <style>body{{font:14px system-ui;margin:2rem}}table{{border-collapse:collapse;width:100%}}
 td,th{{border-bottom:1px solid #ddd;padding:6px 8px;text-align:left}}.new{{background:#fff8d6}}</style>
 <h1>Consultations agences 360 - {date.today():%d/%m/%Y}</h1>
-<p style='color:#666'>{html.escape(' &middot; '.join(SOURCES_STATUS))}</p>
+<p style='color:#666'>{html.escape('  |  '.join(SOURCES_STATUS))}</p>
 <table><tr><th></th><th>Score</th><th>Thèmes</th><th>Source</th><th>Objet</th><th>Acheteur</th><th>Publie</th><th>Echeance</th></tr>
 {lignes}</table>"""
     with open("veille_com360.html", "w", encoding="utf-8") as f:
