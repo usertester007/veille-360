@@ -1,0 +1,55 @@
+name: Veille consultations 360
+
+on:
+  schedule:
+    - cron: "0 5 * * 1-5"   # du lundi au vendredi, vers 6h-7h heure de Paris
+  workflow_dispatch:         # bouton "Run workflow" pour lancer à la main
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: veille
+  cancel-in-progress: false
+
+jobs:
+  veille:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Installer les dépendances
+        run: pip install requests feedparser
+
+      - name: Lancer la veille
+        run: python veille_ao_com360.py --jours 30
+
+      - name: Préparer la page
+        run: |
+          mkdir site
+          cp veille_com360.html site/index.html
+          cp veille_com360.csv site/veille_com360.csv
+
+      - name: Sauvegarder l'historique (pour repérer les nouveautés)
+        run: |
+          git config user.name "veille-bot"
+          git config user.email "veille-bot@users.noreply.github.com"
+          git add veille_com360.sqlite
+          git commit -m "maj historique" || echo "rien à commiter"
+          git push || echo "push ignoré"
+
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+      - id: deploy
+        uses: actions/deploy-pages@v4
