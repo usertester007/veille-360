@@ -40,26 +40,52 @@ except ImportError:  # RSS optionnel
 # --------------------------------------------------------------------------
 # CONFIG - a adapter
 # --------------------------------------------------------------------------
-# Mots-cles avec poids. Plus le score est haut, plus l'annonce est pertinente.
+# Mots-cles avec poids (profil : agence creative 360 - strategie de marque,
+# branding, campagnes, video, digital/site, social media, influence).
 MOTS_CLES = {
-    "communication 360": 10,
-    "agence 360": 10,
-    "agence conseil en communication": 8,
-    "agence de communication": 6,
-    "strategie de communication": 6,
-    "campagne de communication": 5,
-    "plateforme de marque": 5,
-    "conseil en communication": 5,
-    "creation": 2,
-    "relations presse": 2,
-    "social media": 2,
-    "influence": 2,
-    "evenementiel": 2,
-    "marque employeur": 3,
+    # 360 / agence
+    "communication 360": 10, "agence 360": 10, "agence conseil en communication": 8,
+    "agence de communication": 7, "agence creative": 7, "agence de publicite": 7,
+    "campagne de communication": 8, "campagne publicitaire": 8, "campagne de publicite": 8,
+    "strategie de communication": 7, "conseil en communication": 6,
+    "plan de communication": 6, "communication globale": 6,
+    # marque / branding
+    "strategie de marque": 8, "plateforme de marque": 8, "branding": 7,
+    "identite de marque": 7, "identite visuelle": 6, "rebranding": 7,
+    "image de marque": 5, "marque employeur": 5, "charte graphique": 5,
+    "creation de marque": 6, "positionnement de marque": 6, "creation graphique": 4,
+    # video / contenus
+    "production video": 7, "production audiovisuelle": 7, "film institutionnel": 7, "films institutionnels": 7, "films publicitaires": 8,
+    "production de films": 7, "realisation de films": 7, "contenus video": 5,
+    "film publicitaire": 8, "motion design": 5, "podcast": 4, "video": 3, "film": 2,
+    "contenus editoriaux": 4, "creation de contenus": 4,
+    # digital / site
+    "refonte du site": 6, "refonte de site": 6, "refonte site": 6, "creation de site": 5,
+    "site internet": 3, "site web": 3, "accessibilite numerique": 2, "rgaa": 2,
+    "marketing digital": 4, "strategie digitale": 5,
+    # social / influence
+    "reseaux sociaux": 4, "social media": 4, "community management": 4,
+    "influence": 4, "influenceur": 4, "tiktok": 3, "instagram": 2,
+    # autres leviers
+    "publicite": 3, "relations presse": 3, "evenementiel": 2, "activation": 2,
+    "marketing": 2, "notoriete": 3, "lancement de": 1,
 }
 # Mots qui disqualifient (bruit frequent)
-MOTS_EXCLUS = ["achat d'espace seul", "centre d'appels", "teleconseiller",
-               "sondage", "maintenance", "nettoyage", "gmao"]
+MOTS_EXCLUS = [
+    "achat d'espace seul", "centre d'appels", "teleconseiller", "sondage",
+    "maintenance", "nettoyage", "gmao", "videosurveillance", "video-surveillance",
+    "videoprotection", "visioconference", "telecommunication", "communications electroniques",
+    "location de", "fourniture de", "travaux de", "securite incendie",
+]
+# Themes affiches dans les resultats (un tag par theme detecte)
+THEMES = {
+    "360 / campagne": ["360", "campagne", "agence de communication", "agence conseil", "agence creative", "communication globale", "plan de communication", "strategie de communication"],
+    "Marque / branding": ["marque", "branding", "identite visuelle", "charte graphique", "rebranding", "positionnement"],
+    "Video": ["video", "film", "audiovisuel", "motion design", "podcast"],
+    "Site / digital": ["site internet", "site web", "refonte", "digital", "rgaa"],
+    "Social / influence": ["reseaux sociaux", "social media", "community", "influen", "tiktok", "instagram"],
+    "Pub / RP / event": ["publicite", "relations presse", "evenementiel", "activation", "notoriete"],
+}
 
 SCORE_MINI = 5
 
@@ -89,8 +115,14 @@ def scorer(texte: str) -> int:
     return sum(poids for mot, poids in MOTS_CLES.items() if mot in t)
 
 
+def detecter_themes(texte: str) -> str:
+    t = normaliser(texte)
+    return " | ".join(n for n, mots in THEMES.items() if any(m in t for m in mots))
+
+
 def annonce(source, ident, titre, acheteur, publie, echeance, url, extrait=""):
     return {
+        "themes": detecter_themes(f"{titre} {extrait}"),
         "source": source, "id": f"{source}:{ident}", "titre": (titre or "").strip(),
         "acheteur": (acheteur or "").strip(), "publie": publie or "",
         "echeance": echeance or "", "url": url or "",
@@ -108,7 +140,9 @@ BOAMP_URL = ("https://boamp-datadila.opendatasoft.com/api/explore/v2.1/"
 def source_boamp(jours: int):
     depuis = (date.today() - timedelta(days=jours)).isoformat()
     resultats, vus = [], set()
-    requetes = ["communication", "agence", "campagne", "publicite", "marque"]
+    requetes = ["communication", "agence", "campagne", "publicite", "marque", "branding",
+                "identite visuelle", "video", "film", "refonte", "site internet",
+                "influence", "reseaux sociaux", "creation graphique", "marketing", "podcast"]
     for mot in requetes:
         offset = 0
         while offset < 300:
@@ -156,7 +190,7 @@ def _txt(v):
 def source_ted(jours: int):
     depuis = (date.today() - timedelta(days=jours)).strftime("%Y%m%d")
     corps = {
-        "query": (f"classification-cpv IN (79341100 79340000 79341000) "
+        "query": (f"classification-cpv IN (79340000 79341000 79341100 79341200 79341400 79342000 79822500 92111200 72413000 79416000) "
                   f"AND buyer-country=FRA AND publication-date>={depuis}"),
         "fields": ["publication-number", "notice-title", "buyer-name",
                    "publication-date", "deadline-receipt-tender-date-lot", "links"],
@@ -220,7 +254,7 @@ def marquer_nouveaux(annonces):
     con.close()
 
 
-COLS = ["nouveau", "score", "source", "titre", "acheteur", "publie", "echeance", "url"]
+COLS = ["nouveau", "score", "themes", "source", "titre", "acheteur", "publie", "echeance", "url"]
 
 
 def exporter(annonces):
@@ -231,7 +265,7 @@ def exporter(annonces):
 
     lignes = "".join(
         f"<tr class='{'new' if a['nouveau'] else ''}'><td>{'NEW' if a['nouveau'] else ''}</td>"
-        f"<td>{a['score']}</td><td>{a['source']}</td>"
+        f"<td>{a['score']}</td><td>{html.escape(a['themes'])}</td><td>{a['source']}</td>"
         f"<td><a href='{html.escape(a['url'])}'>{html.escape(a['titre'])}</a></td>"
         f"<td>{html.escape(a['acheteur'])}</td><td>{a['publie']}</td><td>{a['echeance']}</td></tr>"
         for a in annonces)
@@ -239,7 +273,7 @@ def exporter(annonces):
 <style>body{{font:14px system-ui;margin:2rem}}table{{border-collapse:collapse;width:100%}}
 td,th{{border-bottom:1px solid #ddd;padding:6px 8px;text-align:left}}.new{{background:#fff8d6}}</style>
 <h1>Consultations agences 360 - {date.today():%d/%m/%Y}</h1>
-<table><tr><th></th><th>Score</th><th>Source</th><th>Objet</th><th>Acheteur</th><th>Publie</th><th>Echeance</th></tr>
+<table><tr><th></th><th>Score</th><th>Thèmes</th><th>Source</th><th>Objet</th><th>Acheteur</th><th>Publie</th><th>Echeance</th></tr>
 {lignes}</table>"""
     with open("veille_com360.html", "w", encoding="utf-8") as f:
         f.write(page)
