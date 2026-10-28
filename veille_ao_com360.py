@@ -197,7 +197,8 @@ def source_ted(jours: int):
         "limit": 100, "page": 1, "scope": "ALL",
     }
     r = requests.post(TED_URL, json=corps, headers=HEADERS, timeout=TIMEOUT)
-    r.raise_for_status()
+    if not r.ok:
+        raise RuntimeError(f"HTTP {r.status_code} - {r.text[:300]}")
     out = []
     for n in r.json().get("notices", []):
         num = n.get("publication-number")
@@ -213,24 +214,74 @@ def source_ted(jours: int):
 # --------------------------------------------------------------------------
 # Source 3 : flux RSS (presse specialisee)
 # --------------------------------------------------------------------------
-def source_rss(jours: int):
-    if not feedparser or not FLUX_RSS:
-        return []
-    out = []
-    for url in FLUX_RSS:
-        flux = feedparser.parse(url)
-        for e in flux.entries:
-            texte = f"{e.get('title', '')} {e.get('summary', '')}"
-            # on ne garde que les articles qui parlent de competition / consultation
-            if not re.search(r"competition|consultation|appel d.offres|pitch|budget", normaliser(texte)):
+# Recherches presse (Google Actualites + Bing Actualites, sans cle API).
+# Elles remontent les competitions d'agences annoncees par CB News, Strategies,
+# La Reclame, Offremedia, etc., y compris pour les marques privees.
+REQUETES_PRESSE = [
+    'site:cbnews.fr (competition OR consultation OR "appel d\'offres" OR pitch)',
+    'site:strategies.fr (competition OR consultation OR "appel d\'offres" OR pitch) agence',
+    'site:lareclame.fr (competition OR consultation OR pitch) agence',
+    'site:offremedia.com (competition OR consultation OR pitch) agence',
+    '"lance une compétition" agence communication',
+    '"lance une consultation" agence communication',
+    '"recherche une agence" communication',
+    '"appel d\'offres" "communication 360"',
+    '"compétition" "stratégie de marque" OR branding OR "plateforme de marque"',
+    '"compétition" agence "campagne" budget',
+    'budget communication "en compétition"',
+    '"consultation" agence "refonte" site marque',
+]
+PITCH_RE = re.compile(
+    r"competition|consultation|appel d.offres|pitch|recherche une agence|"
+    r"lance .{0,40}(agence|budget)|budget .{0,30}(en jeu|a pourvoir|en competition)")
+
+
+def _entrees_flux(url):
+    r = requests.get(url, headers=HEADERS, timeout=TIMEOUT)
+    r.raise_for_status()
+    return feedparser.parse(r.content).entries
+
+
+def source_presse(jours: int):
+    if not feedparser:
+        raise RuntimeError("feedparser non installe (pip install feedparser)")
+    from urllib.parse import urlencode
+    flux_urls = []
+    for q in REQUETES_PRESSE:
+        flux_urls.append("https://news.google.com/rss/search?" + urlencode(
+            {"q": f"{q} when:{jours}d", "hl": "fr", "gl": "FR", "ceid": "FR:fr"}))
+    flux_urls += FLUX_RSS
+    limite = (date.today() - timedelta(days=jours)).isoformat()
+    out, erreurs = {}, 0
+    for url in flux_urls:
+        try:
+            entrees = _entrees_flux(url)
+        except Exception as e:
+            erreurs += 1
+            print(f"  [PRESSE] flux ignore ({str(e)[:80]})", file=sys.stderr)
+            continue
+        for e in entrees:
+            titre = e.get("title", "")
+            texte = f"{titre} {e.get('summary', '')}"
+            nt = normaliser(texte)
+            if not PITCH_RE.search(nt):
                 continue
             pub = ""
             if e.get("published_parsed"):
-                pub = datetime(*e.published_parsed[:6]).date().isoformat()
-            out.append(annonce("PRESSE", e.get("link"), e.get("title"),
-                               flux.feed.get("title", ""), pub, "", e.get("link"),
-                               e.get("summary", "")))
-    return out
+                pub = datetime(*e.get("published_parsed")[:6]).date().isoformat()
+            if pub and pub < limite:
+                continue
+            media = (e.get("source") or {}).get("title", "") if isinstance(e.get("source"), dict) else ""
+            if not media and " - " in titre:
+                media = titre.rsplit(" - ", 1)[-1]
+            a = annonce("PRESSE", e.get("link"), titre, media, pub, "", e.get("link"),
+                        e.get("summary", ""))
+            if not any(m in nt for m in MOTS_EXCLUS):
+                a["score"] += 6  # une annonce de competition/pitch est deja pertinente en soi
+            out[a["id"]] = a
+    if erreurs == len(flux_urls):
+        raise RuntimeError("aucun flux presse accessible")
+    return list(out.values())
 
 
 # --------------------------------------------------------------------------
@@ -254,6 +305,7 @@ def marquer_nouveaux(annonces):
     con.close()
 
 
+SOURCES_STATUS = []
 COLS = ["nouveau", "score", "themes", "source", "titre", "acheteur", "publie", "echeance", "url"]
 
 
@@ -273,6 +325,7 @@ def exporter(annonces):
 <style>body{{font:14px system-ui;margin:2rem}}table{{border-collapse:collapse;width:100%}}
 td,th{{border-bottom:1px solid #ddd;padding:6px 8px;text-align:left}}.new{{background:#fff8d6}}</style>
 <h1>Consultations agences 360 - {date.today():%d/%m/%Y}</h1>
+<p style='color:#666'>{html.escape(' &middot; '.join(SOURCES_STATUS))}</p>
 <table><tr><th></th><th>Score</th><th>Thèmes</th><th>Source</th><th>Objet</th><th>Acheteur</th><th>Publie</th><th>Echeance</th></tr>
 {lignes}</table>"""
     with open("veille_com360.html", "w", encoding="utf-8") as f:
@@ -286,13 +339,15 @@ def main():
     args = p.parse_args()
 
     toutes = []
-    for nom, fn in [("BOAMP", source_boamp), ("TED", source_ted), ("RSS", source_rss)]:
+    for nom, fn in [("BOAMP", source_boamp), ("TED", source_ted), ("PRESSE", source_presse)]:
         try:
             res = fn(args.jours)
             print(f"[{nom}] {len(res)} annonces recuperees")
+            SOURCES_STATUS.append(f"{nom} : OK ({len(res)})")
             toutes += res
         except Exception as e:  # une source en panne ne bloque pas les autres
             print(f"[{nom}] ERREUR : {e}", file=sys.stderr)
+            SOURCES_STATUS.append(f"{nom} : ERREUR ({str(e)[:90]})")
 
     uniques = {a["id"]: a for a in toutes}.values()
     retenues = [a for a in uniques if a["score"] >= SCORE_MINI and encore_ouvert(a)]
