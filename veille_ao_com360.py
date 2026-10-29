@@ -201,7 +201,8 @@ def detecter_themes(texte: str) -> str:
 
 
 def annonce(source, ident, titre, acheteur, publie, echeance, url, extrait="",
-            description="", departement="", procedure="", montant=""):
+            description="", departement="", procedure="", montant="",
+            depot="", contact=None, lots=None):
     titre = nettoyer(titre)
     extrait = nettoyer(extrait)
     desc = nettoyer(description)
@@ -218,6 +219,9 @@ def annonce(source, ident, titre, acheteur, publie, echeance, url, extrait="",
         "departement": nettoyer(departement), "procedure": nettoyer(procedure),
         "montant": montant or "",
         "aussi": [],               # meme avis publie sur une autre source (doublon fusionne)
+        "depot": depot or "",      # lien vers la plateforme de depot / dossier de consultation
+        "contact": contact or {},  # {nom, mail, tel}
+        "lots": lots or [],        # [{num, titre, max, estime}]
     }
     _maj_description(a)
     return calculer_score(a)
@@ -274,6 +278,183 @@ def _infos_boamp(donnees):
     return description, montant
 
 
+# --- Plateforme de depot, contact et lots (meilleur effort, formats eForms et ancien BOAMP) ---
+URL_RE = re.compile(r"https?://[^\s\"'<>)\]]+")
+MAIL_RE = re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+")
+# Hebergeurs a ne jamais proposer comme lien de depot
+HOTES_EXCLUS = ("boamp.fr", "europa.eu", "legifrance", "eur-lex", "juradm.fr", "telerecours",
+                "w3.org", "data.gouv", "service-public", "economie.gouv.fr", "schemas")
+# Mots presents dans le nom des plateformes de marches publics
+HOTE_PLATEFORME = re.compile(r"marche|achat|megalis|maximilien|klekoon|synapse|ternum|xmarches|"
+                             r"demat|place|aws|e-occitanie|alsacemarchespublics|centreofficielle|"
+                             r"ampmetropole|salle")
+# Mails a ne pas proposer comme contact (tribunal, greffe...)
+MAILS_EXCLUS = ("greffe", "tribunal", "juradm", "telerecours", "ccira", "cnil")
+
+
+def _hote(url) -> str:
+    m = re.match(r"https?://([^/?#]+)", url or "")
+    return (m.group(1).lower() if m else "").removeprefix("www.")
+
+
+def _parcourir_chemin(obj, chemin=()):
+    """Comme _parcourir, mais avec le chemin des cles (pour savoir d'ou vient un lien)."""
+    if isinstance(obj, dict):
+        for k, v in obj.items():
+            if isinstance(v, dict) and "#text" in v and not isinstance(v["#text"], (dict, list)):
+                yield chemin + (str(k),), v["#text"]
+            if isinstance(v, (dict, list)):
+                yield from _parcourir_chemin(v, chemin + (str(k),))
+            else:
+                yield chemin + (str(k),), v
+    elif isinstance(obj, list):
+        for v in obj:
+            yield from _parcourir_chemin(v, chemin)
+
+
+def _texte(v) -> str:
+    if isinstance(v, dict):
+        return _texte(v.get("#text") or v.get("fra") or v.get("FRA") or "")
+    if isinstance(v, list):
+        return _texte(v[0]) if v else ""
+    return "" if v is None else str(v).strip()
+
+
+def _choisir_depot(couples):
+    """couples = [(chemin_en_majuscules, url)] -> meilleure URL de depot."""
+    meilleur, score_max = "", 0
+    for chemin, url in couples:
+        url = url.rstrip(".,;")
+        hote = _hote(url)
+        if not hote or any(x in hote for x in HOTES_EXCLUS):
+            continue
+        sc = 1
+        if any(x in chemin for x in ("ENDPOINTID", "SUBMISSION", "DEPOT", "PRESENTATION", "REMISE")):
+            sc += 5
+        elif any(x in chemin for x in ("CALLFORTENDERSDOCUMENT", "DOCUMENT", "DCE")):
+            sc += 4
+        elif any(x in chemin for x in ("BUYERPROFILE", "PROFIL")):
+            sc += 3
+        if HOTE_PLATEFORME.search(hote):
+            sc += 2
+        if re.search(r"consultation|cons|id=|refPub|idCons", url, re.I):
+            sc += 1
+        if sc > score_max:
+            meilleur, score_max = url, sc
+    return meilleur
+
+
+def _contact(obj):
+    """Cherche le dict qui porte un mail (hors tribunal) et prend nom / telephone a cote."""
+    trouve = {}
+
+    def visiter(o):
+        if trouve:
+            return
+        if isinstance(o, dict):
+            mail = tel = nom = ""
+            for k, v in o.items():
+                ku, tv = str(k).upper(), _texte(v)
+                if not tv or isinstance(v, list) and len(v) > 1 and isinstance(v[0], dict):
+                    continue
+                if not mail and ("MAIL" in ku or ku.endswith("MEL") or "COURRIEL" in ku) and MAIL_RE.fullmatch(tv):
+                    mail = tv
+                elif not tel and ("TELEPHONE" in ku or ku.endswith("TEL") or ku == "TEL"):
+                    tel = tv
+                elif not nom and any(x in ku for x in ("CORRESPONDANT", "NOM_CONTACT", "CONTACT_NOM")) or (
+                        not nom and ku.endswith(":NAME") and "PARTY" not in ku):
+                    nom = tv if len(tv) < 80 else ""
+            if mail and not any(x in mail.lower() for x in MAILS_EXCLUS):
+                trouve.update(nom=nom, mail=mail, tel=tel)
+                return
+            for v in o.values():
+                visiter(v)
+        elif isinstance(o, list):
+            for v in o:
+                visiter(v)
+
+    visiter(obj)
+    return trouve
+
+
+def _lots(obj):
+    """Repere les lots (LOT-0001...) avec leur titre et leur montant maximum ou estime."""
+    lots, vus = [], set()
+
+    def montant_dans(o, cles):
+        for chemin, v in _parcourir_chemin(o):
+            c = chemin[-1].upper() if chemin else ""
+            if any(x in c for x in cles) and "CURRENCY" not in c and "DEVISE" not in c:
+                m = _format_montant(_texte(v))
+                if m:
+                    return m
+        return ""
+
+    def visiter(o):
+        if isinstance(o, dict):
+            ident = ""
+            for k, v in o.items():
+                ku = str(k).upper()
+                tv = _texte(v)
+                if (ku.endswith(":ID") or ku in ("ID", "NUM", "NUM_LOT", "NUMERO_LOT")) and re.match(
+                        r"^(LOT-\d+|\d{1,3})$", tv) and ("LOT" in tv or "LOT" in ku or "LOT" in str(o)[:200].upper()):
+                    ident = tv
+                    break
+            if ident and ident not in vus and not ident.startswith("LOT-0000"):
+                titre = ""
+                for chemin, v in _parcourir_chemin(o):
+                    c = chemin[-1].upper() if chemin else ""
+                    if (c.endswith(":NAME") or c in ("INTITULE", "TITRE", "INTITULE_LOT", "TITLE")) and isinstance(_texte(v), str) and len(_texte(v)) > 3:
+                        titre = _texte(v)
+                        break
+                if titre:
+                    vus.add(ident)
+                    num = re.sub(r"^LOT-0*", "", ident) or ident
+                    lots.append({
+                        "num": num, "titre": titre[:160],
+                        "max": montant_dans(o, ("FRAMEWORKMAXIMUM", "MAXIMUM", "MAX")),
+                        "estime": montant_dans(o, ("ESTIMATEDOVERALL", "ESTIMATED", "VALEUR", "MONTANT")),
+                    })
+                    return
+            for v in o.values():
+                visiter(v)
+        elif isinstance(o, list):
+            for v in o:
+                visiter(v)
+
+    visiter(obj)
+    return lots[:12]
+
+
+def _infos_pratiques(donnees):
+    """-> dict(depot=url, contact={nom, mail, tel}, lots=[...]) a partir du JSON de l'avis."""
+    import json
+    if isinstance(donnees, str):
+        try:
+            donnees = json.loads(donnees)
+        except ValueError:
+            # pas du JSON : on tente au moins les liens et le mail dans le texte brut
+            urls = [("", u) for u in URL_RE.findall(donnees)]
+            mails = [m for m in MAIL_RE.findall(donnees) if not any(x in m.lower() for x in MAILS_EXCLUS)]
+            return {"depot": _choisir_depot(urls), "contact": {"mail": mails[0]} if mails else {}, "lots": []}
+    if not isinstance(donnees, (dict, list)):
+        return {"depot": "", "contact": {}, "lots": []}
+    couples = []
+    for chemin, v in _parcourir_chemin(donnees):
+        if isinstance(v, str) and "http" in v:
+            ch = "/".join(chemin).upper()
+            couples += [(ch, u) for u in URL_RE.findall(v)]
+    contact = _contact(donnees)
+    if not contact:  # dernier recours : premier mail cite dans un texte libre
+        for _, v in _parcourir_chemin(donnees):
+            if isinstance(v, str):
+                ms = [m for m in MAIL_RE.findall(v) if not any(x in m.lower() for x in MAILS_EXCLUS)]
+                if ms:
+                    contact = {"mail": ms[0].rstrip(".")}
+                    break
+    return {"depot": _choisir_depot(couples), "contact": contact, "lots": _lots(donnees)}
+
+
 def source_boamp(jours: int):
     depuis = (date.today() - timedelta(days=jours)).isoformat()
     resultats, vus = [], set()
@@ -300,6 +481,10 @@ def source_boamp(jours: int):
                     continue
                 vus.add(ident)
                 description, montant = _infos_boamp(x.get("donnees"))
+                pratique = _infos_pratiques(x.get("donnees"))
+                if not pratique["depot"]:
+                    pratique["depot"] = _choisir_depot(
+                        [("PROFIL", u) for u in URL_RE.findall(str(x.get("url_profil_acheteur") or ""))])
                 procedure = " / ".join(filter(None, [
                     _liste(x.get("procedure_libelle") or x.get("type_procedure")),
                     _liste(x.get("nature_libelle"))]))
@@ -311,7 +496,7 @@ def source_boamp(jours: int):
                     _liste(x.get("descripteur_libelle")),
                     description=description,
                     departement=_liste(x.get("code_departement")),
-                    procedure=procedure, montant=montant,
+                    procedure=procedure, montant=montant, **pratique,
                 ))
             offset += 100
     return resultats
@@ -327,6 +512,8 @@ CHAMPS_TED = ["publication-number", "notice-title", "buyer-name",
 CHAMPS_TED_DETAIL = ["description-proc", "description-lot", "procedure-type",
                      "estimated-value-proc", "estimated-value-lot",
                      "place-of-performance-subdiv-lot"]
+# Lien de depot et contact : facultatifs aussi, retires en premier si l'API les refuse
+CHAMPS_TED_PRATIQUE = ["document-url-lot", "submission-url-lot", "buyer-email"]
 
 
 def _txt(v):
@@ -345,7 +532,7 @@ def source_ted(jours: int):
     corps = {
         "query": (f"classification-cpv IN (79340000 79341000 79341100 79341200 79341400 79342000 79822500 92111200 72413000 72420000 72421000 72212224 79416000) "
                   f"AND buyer-country=FRA AND publication-date>={depuis}"),
-        "fields": CHAMPS_TED + CHAMPS_TED_DETAIL,
+        "fields": CHAMPS_TED + CHAMPS_TED_DETAIL + CHAMPS_TED_PRATIQUE,
         "limit": 100, "page": 1, "scope": "ALL",
     }
     out, page = [], 1
@@ -353,9 +540,13 @@ def source_ted(jours: int):
         corps["page"] = page
         r = requests.post(TED_URL, json=corps, headers=HEADERS, timeout=TIMEOUT)
         if r.status_code == 400 and page == 1 and corps["fields"] != CHAMPS_TED:
-            # un champ de detail n'est pas reconnu par l'API : on retente sans eux
-            print("  [TED] champs de detail refuses, repli sur les champs de base", file=sys.stderr)
-            corps["fields"] = CHAMPS_TED
+            # un champ facultatif n'est pas reconnu par l'API : on retente avec moins de champs
+            if len(corps["fields"]) > len(CHAMPS_TED + CHAMPS_TED_DETAIL):
+                print("  [TED] champs depot/contact refuses, on continue sans", file=sys.stderr)
+                corps["fields"] = CHAMPS_TED + CHAMPS_TED_DETAIL
+            else:
+                print("  [TED] champs de detail refuses, repli sur les champs de base", file=sys.stderr)
+                corps["fields"] = CHAMPS_TED
             continue
         if not r.ok:
             if page == 1:
@@ -375,6 +566,9 @@ def source_ted(jours: int):
                 departement=_txt(n.get("place-of-performance-subdiv-lot")),
                 procedure=_txt(n.get("procedure-type")),
                 montant=_format_montant(_txt(n.get("estimated-value-proc")) or _txt(n.get("estimated-value-lot"))),
+            depot=_choisir_depot([("SUBMISSION", u) for u in URL_RE.findall(_txt(n.get("submission-url-lot")))]
+                                 + [("DOCUMENT", u) for u in URL_RE.findall(_txt(n.get("document-url-lot")))]),
+            contact={"mail": m} if (m := _txt(n.get("buyer-email"))) and MAIL_RE.fullmatch(m) else {},
             ))
         total = js.get("totalNoticeCount")
         if len(notices) < corps["limit"] or (total and page * corps["limit"] >= total):
@@ -504,7 +698,7 @@ def fusionner_doublons(annonces):
         b = meilleur
         if len(t["_desc"]) > len(b["_desc"]):
             b["_desc"] = t["_desc"]
-        for champ in ("departement", "procedure", "montant", "echeance"):
+        for champ in ("departement", "procedure", "montant", "echeance", "depot", "contact", "lots"):
             if not b[champ]:
                 b[champ] = t[champ]
         b["aussi"].append({"source": "TED", "url": t["url"]})
@@ -535,10 +729,11 @@ def marquer_nouveaux(annonces):
 SOURCES_STATUS = []
 ENTONNOIR = []
 COLS = ["nouveau", "score", "explication", "themes", "source", "titre", "acheteur",
-        "departement", "procedure", "montant", "publie", "echeance", "url", "aussi_sur"]
+        "departement", "procedure", "montant", "publie", "echeance", "url", "depot",
+        "contact_mail", "aussi_sur"]
 CHAMPS_PAGE = ["nouveau", "score", "detail", "bonus", "themes", "source", "titre", "acheteur",
                "description", "departement", "procedure", "montant", "publie", "echeance", "url",
-               "aussi"]
+               "aussi", "depot", "contact", "lots"]
 
 
 def explication(a) -> str:
@@ -620,6 +815,19 @@ HTML_TEMPLATE = r"""<!doctype html>
   .pop .gauge.b i { background:var(--warn); }
   .pop .gauge.d i { background:color-mix(in srgb, var(--acc) 45%, var(--s1)); }
   .pop .hint { color:var(--mut); font-size:12px; margin:10px 0 0; }
+  .pop { max-height:75vh; overflow:auto; }
+  .pop .go { display:block; text-align:center; background:var(--acc); color:#fff; border-radius:7px; padding:8px 10px; font-weight:600; margin:0 0 6px; }
+  @media (prefers-color-scheme: dark) { .pop .go { color:#0d1b33; } }
+  .pop .go:hover { text-decoration:none; filter:brightness(1.08); }
+  .pop .go-note { color:var(--mut); font-size:12px; margin:0 0 10px; }
+  .pop .blk { border-top:1px solid var(--line); padding-top:10px; margin-top:10px; }
+  .pop .blk-h { font-weight:600; margin-bottom:6px; }
+  .pop .ct { display:grid; grid-template-columns:auto 1fr; gap:3px 12px; margin:0; }
+  .pop .lot { display:grid; grid-template-columns:auto 1fr auto; gap:8px; padding:3px 0; align-items:baseline; }
+  .pop .lot b { font-weight:600; color:var(--mut); font-size:12px; }
+  .pop .lot span:last-child { color:var(--mut); white-space:nowrap; font-variant-numeric:tabular-nums; }
+  .pop .warn { color:var(--warn); }
+  .dep { display:inline-block; margin-top:4px; font-size:12px; }
   @media (prefers-reduced-motion:no-preference) { .pop { transition:opacity .12s; } }
 </style>
 </head>
@@ -742,6 +950,7 @@ if (typeof document !== "undefined") {
     theme: $("fTheme").value, source: $("fSource").value, sort: $("fSort").value,
     text: $("fText").value, onlyNew: $("fNew").checked
   });
+  const hote = u => { try { return new URL(u).hostname.replace(/^www\./, ""); } catch (e) { return "la plateforme"; } };
   const pillClass = s => s >= 18 ? "p4" : s >= 12 ? "p3" : s >= 8 ? "p2" : "p1";
 
   function render() {
@@ -758,7 +967,7 @@ if (typeof document !== "undefined") {
         <td>${a.nouveau ? '<span class="tag">NEW</span>' : ""}</td>
         <td><span class="pill ${pillClass(a.score)}">${a.score}</span></td>
         <td>${tags}</td><td><span class="tag">${esc(a.source)}</span>${(a.aussi || []).map(x => `<span class="tag" title="Aussi publié sur ${esc(x.source)}">+${esc(x.source)}</span>`).join("")}</td>
-        <td><a href="${esc(a.url)}" target="_blank" rel="noopener">${esc(a.titre)}</a></td>
+        <td><a href="${esc(a.url)}" target="_blank" rel="noopener">${esc(a.titre)}</a>${a.depot ? `<br><a class="dep" href="${esc(a.depot)}" target="_blank" rel="noopener">Déposer sur ${esc(hote(a.depot))}</a>` : ""}</td>
         <td>${esc(a.acheteur)}</td><td>${esc(a.publie)}</td><td class="${cls}">${ech}</td></tr>`;
     }).join("");
     $("empty").hidden = current.length > 0;
@@ -822,10 +1031,25 @@ if (typeof document !== "undefined") {
       ? lignes.map(([m, p, c]) => `<div class="why-row"><span>${esc(m)}</span><span class="gauge ${c}"><i style="width:${Math.round(p / max * 100)}%"></i></span><span>+${p}</span></div>`).join("")
       : `<p class="hint">Aucun mot-clé détaillé pour cette annonce.</p>`;
     const desc = a.description ? `<p class="desc">${esc(a.description.length > 450 ? a.description.slice(0, 450) + "…" : a.description)}</p>` : "";
+    const c = a.contact || {};
+    let depot = "";
+    if (a.depot) {
+      depot = `<a class="go" href="${esc(a.depot)}" target="_blank" rel="noopener">Dossier et dépôt sur ${esc(hote(a.depot))}</a>
+        <p class="go-note">Les questions sur le contenu se posent aussi sur cette plateforme.</p>`;
+    } else if (a.source !== "PRESSE") {
+      depot = `<p class="go-note warn">Lien de dépôt non trouvé : cherchez « profil d’acheteur » ou « adresse de présentation » dans l’avis.</p>`;
+    }
+    const contact = (c.mail || c.tel || c.nom) ? `<div class="blk"><div class="blk-h">Contact</div><dl class="ct">
+        ${c.nom ? `<dt>Nom</dt><dd>${esc(c.nom)}</dd>` : ""}
+        ${c.mail ? `<dt>Mail</dt><dd><a href="mailto:${esc(c.mail)}">${esc(c.mail)}</a></dd>` : ""}
+        ${c.tel ? `<dt>Téléphone</dt><dd><a href="tel:${esc(c.tel.replace(/\s/g, ""))}">${esc(c.tel)}</a></dd>` : ""}
+      </dl>${a.depot ? `<p class="hint" style="margin-top:6px">Pour les renseignements administratifs.</p>` : ""}</div>` : "";
+    const lots = (a.lots || []).length ? `<div class="blk"><div class="blk-h">${a.lots.length} lot${a.lots.length > 1 ? "s" : ""}</div>
+      ${a.lots.map(l => `<div class="lot"><b>Lot ${esc(l.num)}</b><span>${esc(l.titre)}</span><span>${l.max ? esc(l.max) + " max" : esc(l.estime || "")}</span></div>`).join("")}</div>` : "";
     return `<h3>${esc(a.titre)}</h3>
       <p class="who">${esc(a.acheteur || "Acheteur non renseigné")} – ${esc(a.source)}</p>
-      ${desc}${infos ? `<dl>${infos}</dl>` : ""}
-      <div class="why"><div class="why-h">Pourquoi ce score <span class="pill ${pillClass(a.score)}">${a.score}</span></div>${why}</div>
+      ${depot}${desc}${infos ? `<dl>${infos}</dl>` : ""}${lots}${contact}
+      <div class="why blk"><div class="why-h">Pourquoi ce score <span class="pill ${pillClass(a.score)}">${a.score}</span></div>${why}</div>
       <p class="hint">${noHover ? "Touchez le titre pour ouvrir l’annonce." : "Cliquez sur le titre pour ouvrir l’annonce."}</p>`;
   }
   function showPop(el) {
@@ -881,11 +1105,12 @@ if (typeof document !== "undefined") {
     $("fSource").value = ""; $("fSort").value = "score"; $("fText").value = ""; $("fNew").checked = false; render();
   });
   $("csv").addEventListener("click", () => {
-    const cols = ["nouveau", "score", "explication", "themes", "source", "titre", "acheteur", "departement", "procedure", "montant", "publie", "echeance", "url", "aussi_sur"];
+    const cols = ["nouveau", "score", "explication", "themes", "source", "titre", "acheteur", "departement", "procedure", "montant", "publie", "echeance", "url", "depot", "contact_mail", "aussi_sur"];
     const q = v => '"' + String(v == null ? "" : v).replace(/"/g, '""') + '"';
     current.forEach(r => {
       r.explication = r.detail.map(([m, p, o]) => `${m} (+${p}${o === "d" ? ", description" : ""})`).concat(r.bonus ? [`compétition presse (+${r.bonus})`] : []).join(", ");
       r.aussi_sur = (r.aussi || []).map(x => x.url).join(" ");
+      r.contact_mail = (r.contact || {}).mail || "";
     });
     const csv = "\ufeff" + [cols.join(";")].concat(current.map(r => cols.map(c => q(r[c])).join(";"))).join("\r\n");
     const l = document.createElement("a");
@@ -904,6 +1129,7 @@ def exporter(annonces):
     for a in annonces:
         a["explication"] = explication(a)
         a["aussi_sur"] = " ".join(x["url"] for x in a.get("aussi", []))
+        a["contact_mail"] = (a.get("contact") or {}).get("mail", "")
     with open("veille_com360.csv", "w", newline="", encoding="utf-8-sig") as f:
         w = csv.DictWriter(f, fieldnames=COLS, extrasaction="ignore", delimiter=";")
         w.writeheader()
