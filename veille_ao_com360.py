@@ -87,6 +87,12 @@ THEMES = {
     "Pub / RP / event": ["publicite", "relations presse", "evenementiel", "activation", "notoriete"],
 }
 
+# Mots-cles trouves seulement dans la description detaillee : poids reduit et plafonne
+# (les descriptions sont longues et contiennent souvent du texte standard)
+COEF_DESCRIPTION = 0.5
+PLAFOND_DESCRIPTION = 15
+TED_PAGES_MAX = 20  # 100 avis par page
+
 BONUS_PRESSE = 6  # ajoute aux articles de presse qui annoncent une competition
 SCORE_MINI = 3  # seuil bas : la page filtre ensuite (5+ par defaut)
 
@@ -109,10 +115,10 @@ def normaliser(txt: str) -> str:
     return re.sub(r"\s+", " ", txt.lower().replace("\u2019", "'")).strip()
 
 
-def analyser_score(texte: str):
+def analyser_score(texte: str, exclusions: bool = True):
     """Renvoie (score, [[mot, poids], ...] tries par poids, mot_exclu)."""
     t = normaliser(texte)
-    exclu = next((m for m in MOTS_EXCLUS if m in t), "")
+    exclu = next((m for m in MOTS_EXCLUS if m in t), "") if exclusions else ""
     if exclu:
         return 0, [], exclu
     detail = sorted(([mot, poids] for mot, poids in MOTS_CLES.items() if mot in t),
@@ -122,6 +128,32 @@ def analyser_score(texte: str):
 
 def scorer(texte: str) -> int:
     return analyser_score(texte)[0]
+
+
+def calculer_score(a):
+    """Score = mots-cles du titre (+ descripteurs) a plein poids
+             + mots-cles supplementaires de la description (poids reduit, plafonne)
+             + bonus eventuel (presse).
+    Les mots exclus ne sont cherches que dans le titre : les descriptions
+    contiennent trop de texte standard ("fourniture de", "maintenance"...)."""
+    principal = f"{a['titre']} {a['_extrait']}"
+    score, detail, exclu = analyser_score(principal)
+    a["themes"] = detecter_themes(f"{principal} {a['_desc']}")
+    if exclu:
+        a.update(score=0, detail=[], exclu=exclu)
+        return a
+    detail = [[m, p, "t"] for m, p in detail]
+    vus = {m for m, _, _ in detail}
+    if a["_desc"]:
+        reste = PLAFOND_DESCRIPTION
+        for m, p in analyser_score(a["_desc"], exclusions=False)[1]:
+            if m in vus or reste <= 0:
+                continue
+            pd = min(reste, max(1, round(p * COEF_DESCRIPTION)))
+            detail.append([m, pd, "d"])
+            reste -= pd
+    a.update(score=sum(p for _, p, _ in detail) + a["bonus"], detail=detail, exclu="")
+    return a
 
 
 def nettoyer(txt) -> str:
@@ -153,25 +185,30 @@ def detecter_themes(texte: str) -> str:
 
 def annonce(source, ident, titre, acheteur, publie, echeance, url, extrait="",
             description="", departement="", procedure="", montant=""):
-    score, detail, exclu = analyser_score(f"{titre} {extrait}")
     titre = nettoyer(titre)
-    description = nettoyer(description or extrait)
-    if normaliser(description) == normaliser(titre):
-        description = ""
-    return {
-        "themes": detecter_themes(f"{titre} {extrait}"),
+    extrait = nettoyer(extrait)
+    desc = nettoyer(description)
+    if normaliser(desc) == normaliser(titre):
+        desc = ""
+    a = {
         "source": source, "id": f"{source}:{ident}", "titre": titre,
         "acheteur": nettoyer(acheteur), "publie": publie or "",
         "echeance": echeance or "", "url": url or "",
-        "score": score,
+        "_extrait": extrait, "_desc": desc,   # textes complets utilises pour le score
         # infos affichees dans la popin
-        "detail": detail,          # mots-cles detectes et leur poids
         "bonus": 0,                # bonus eventuel (annonce presse de competition)
-        "exclu": exclu,
-        "description": description[:700],
+        "description": "",
         "departement": nettoyer(departement), "procedure": nettoyer(procedure),
         "montant": montant or "",
+        "aussi": [],               # meme avis publie sur une autre source (doublon fusionne)
     }
+    _maj_description(a)
+    return calculer_score(a)
+
+
+def _maj_description(a):
+    d = a["_desc"] or a["_extrait"]
+    a["description"] = "" if normaliser(d) == normaliser(a["titre"]) else d[:700]
 
 
 # --------------------------------------------------------------------------
@@ -293,27 +330,40 @@ def source_ted(jours: int):
         "fields": CHAMPS_TED + CHAMPS_TED_DETAIL,
         "limit": 100, "page": 1, "scope": "ALL",
     }
-    r = requests.post(TED_URL, json=corps, headers=HEADERS, timeout=TIMEOUT)
-    if r.status_code == 400:
-        # un champ de detail n'est pas reconnu par l'API : on retente sans eux
-        print("  [TED] champs de detail refuses, repli sur les champs de base", file=sys.stderr)
-        corps["fields"] = CHAMPS_TED
+    out, page = [], 1
+    while page <= TED_PAGES_MAX:
+        corps["page"] = page
         r = requests.post(TED_URL, json=corps, headers=HEADERS, timeout=TIMEOUT)
-    if not r.ok:
-        raise RuntimeError(f"HTTP {r.status_code} - {r.text[:300]}")
-    out = []
-    for n in r.json().get("notices", []):
-        num = n.get("publication-number")
-        out.append(annonce(
-            "TED", num, _txt(n.get("notice-title")), _txt(n.get("buyer-name")),
-            str(_txt(n.get("publication-date")))[:10],
-            str(_txt(n.get("deadline-receipt-tender-date-lot")))[:10],
-            f"https://ted.europa.eu/fr/notice/-/detail/{num}",
-            description=_txt(n.get("description-lot")) or _txt(n.get("description-proc")),
-            departement=_txt(n.get("place-of-performance-subdiv-lot")),
-            procedure=_txt(n.get("procedure-type")),
-            montant=_format_montant(_txt(n.get("estimated-value-proc")) or _txt(n.get("estimated-value-lot"))),
-        ))
+        if r.status_code == 400 and page == 1 and corps["fields"] != CHAMPS_TED:
+            # un champ de detail n'est pas reconnu par l'API : on retente sans eux
+            print("  [TED] champs de detail refuses, repli sur les champs de base", file=sys.stderr)
+            corps["fields"] = CHAMPS_TED
+            continue
+        if not r.ok:
+            if page == 1:
+                raise RuntimeError(f"HTTP {r.status_code} - {r.text[:300]}")
+            print(f"  [TED] page {page} en erreur (HTTP {r.status_code}), arret de la pagination", file=sys.stderr)
+            break
+        js = r.json()
+        notices = js.get("notices", [])
+        for n in notices:
+            num = n.get("publication-number")
+            out.append(annonce(
+                "TED", num, _txt(n.get("notice-title")), _txt(n.get("buyer-name")),
+                str(_txt(n.get("publication-date")))[:10],
+                str(_txt(n.get("deadline-receipt-tender-date-lot")))[:10],
+                f"https://ted.europa.eu/fr/notice/-/detail/{num}",
+                description=_txt(n.get("description-lot")) or _txt(n.get("description-proc")),
+                departement=_txt(n.get("place-of-performance-subdiv-lot")),
+                procedure=_txt(n.get("procedure-type")),
+                montant=_format_montant(_txt(n.get("estimated-value-proc")) or _txt(n.get("estimated-value-lot"))),
+            ))
+        total = js.get("totalNoticeCount")
+        if len(notices) < corps["limit"] or (total and page * corps["limit"] >= total):
+            break
+        page += 1
+    else:
+        print(f"  [TED] limite de {TED_PAGES_MAX} pages atteinte (TED_PAGES_MAX)", file=sys.stderr)
     return out
 
 
@@ -382,9 +432,8 @@ def source_presse(jours: int):
                 media = titre.rsplit(" - ", 1)[-1]
             a = annonce("PRESSE", e.get("link"), titre, media, pub, "", e.get("link"),
                         e.get("summary", ""))
-            if not any(m in nt for m in MOTS_EXCLUS):
-                a["score"] += BONUS_PRESSE  # une annonce de competition/pitch est deja pertinente en soi
-                a["bonus"] = BONUS_PRESSE
+            a["bonus"] = BONUS_PRESSE  # une annonce de competition/pitch est deja pertinente en soi
+            calculer_score(a)          # (le bonus est annule si un mot exclu est present)
             out[a["id"]] = a
     if erreurs == len(flux_urls):
         raise RuntimeError("aucun flux presse accessible")
@@ -394,6 +443,59 @@ def source_presse(jours: int):
 # --------------------------------------------------------------------------
 # Filtrage, base, exports
 # --------------------------------------------------------------------------
+def _mots_sig(txt) -> set:
+    vides = {"pour", "dans", "avec", "des", "les", "marche", "prestations", "prestation",
+             "services", "service", "accord", "cadre", "relatif", "relative", "france"}
+    return {m for m in re.findall(r"[a-z0-9]{4,}", normaliser(txt)) if m not in vides}
+
+
+def _jaccard(x, y) -> float:
+    a, b = _mots_sig(x), _mots_sig(y)
+    return len(a & b) / len(a | b) if a and b else 0.0
+
+
+def _ecart_jours(d1, d2):
+    try:
+        return abs((date.fromisoformat(d1) - date.fromisoformat(d2)).days)
+    except (TypeError, ValueError):
+        return None
+
+
+def fusionner_doublons(annonces):
+    """Un meme avis publie sur BOAMP et sur TED : on garde la fiche BOAMP,
+    completee avec les infos TED, et on retire la fiche TED.
+    Rapprochement : meme date limite (a 1 jour pres), objet et acheteur proches."""
+    boamp = [a for a in annonces if a["source"] == "BOAMP"]
+    a_retirer = set()
+    for t in (a for a in annonces if a["source"] == "TED"):
+        meilleur, sim_max = None, 0.0
+        for b in boamp:
+            ecart = _ecart_jours(t["echeance"], b["echeance"])
+            sim_titre = _jaccard(t["titre"], b["titre"])
+            sim_ach = _jaccard(t["acheteur"], b["acheteur"])
+            if ecart is not None and ecart <= 1:
+                ok = (sim_titre >= 0.45 and sim_ach >= 0.3) or sim_titre >= 0.75
+            else:  # date limite absente d'un cote : on exige plus de ressemblance
+                ecart_pub = _ecart_jours(t["publie"], b["publie"])
+                ok = (ecart_pub is not None and ecart_pub <= 10
+                      and sim_titre >= 0.75 and sim_ach >= 0.5)
+            if ok and sim_titre + sim_ach > sim_max:
+                meilleur, sim_max = b, sim_titre + sim_ach
+        if not meilleur:
+            continue
+        b = meilleur
+        if len(t["_desc"]) > len(b["_desc"]):
+            b["_desc"] = t["_desc"]
+        for champ in ("departement", "procedure", "montant", "echeance"):
+            if not b[champ]:
+                b[champ] = t[champ]
+        b["aussi"].append({"source": "TED", "url": t["url"]})
+        _maj_description(b)
+        calculer_score(b)
+        a_retirer.add(t["id"])
+    return [a for a in annonces if a["id"] not in a_retirer], len(a_retirer)
+
+
 def encore_ouvert(a) -> bool:
     if not a["echeance"]:
         return True  # echeance inconnue : on garde
@@ -413,14 +515,16 @@ def marquer_nouveaux(annonces):
 
 
 SOURCES_STATUS = []
+ENTONNOIR = []
 COLS = ["nouveau", "score", "explication", "themes", "source", "titre", "acheteur",
-        "departement", "procedure", "montant", "publie", "echeance", "url"]
+        "departement", "procedure", "montant", "publie", "echeance", "url", "aussi_sur"]
 CHAMPS_PAGE = ["nouveau", "score", "detail", "bonus", "themes", "source", "titre", "acheteur",
-               "description", "departement", "procedure", "montant", "publie", "echeance", "url"]
+               "description", "departement", "procedure", "montant", "publie", "echeance", "url",
+               "aussi"]
 
 
 def explication(a) -> str:
-    parts = [f"{m} (+{p})" for m, p in a.get("detail", [])]
+    parts = [f"{m} (+{p}{', description' if o == 'd' else ''})" for m, p, o in a.get("detail", [])]
     if a.get("bonus"):
         parts.append(f"competition presse (+{a['bonus']})")
     return ", ".join(parts)
@@ -474,7 +578,7 @@ HTML_TEMPLATE = r"""<!doctype html>
   .mini a { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--fg); }
   .mini .k { flex:none; font-size:12px; color:var(--mut); min-width:34px; }
   .mini .k.soon { color:var(--warn); }
-  .mini .none { color:var(--mut); }
+  .mini.none { color:var(--mut); font-size:13px; margin:0; }
 
   /* Popin de detail */
   tr[data-pop] { cursor:default; }
@@ -496,6 +600,7 @@ HTML_TEMPLATE = r"""<!doctype html>
   .pop .gauge { height:6px; border-radius:3px; background:var(--s1); overflow:hidden; }
   .pop .gauge i { display:block; height:100%; background:var(--acc); }
   .pop .gauge.b i { background:var(--warn); }
+  .pop .gauge.d i { background:color-mix(in srgb, var(--acc) 45%, var(--s1)); }
   .pop .hint { color:var(--mut); font-size:12px; margin:10px 0 0; }
   @media (prefers-reduced-motion:no-preference) { .pop { transition:opacity .12s; } }
 </style>
@@ -503,7 +608,7 @@ HTML_TEMPLATE = r"""<!doctype html>
 <body>
 <main>
   <h1>Consultations agences 360</h1>
-  <p class="sub">Mise à jour du __DATE__ &middot; __STATUS__</p>
+  <p class="sub">Mise à jour du __DATE__ &middot; __STATUS__<br>Tri : __FUNNEL__ → <span id="shown"></span></p>
 
   <section class="synth" id="synth" aria-label="Synthèse"></section>
 
@@ -587,7 +692,7 @@ function filtrer(rows, f, today) {
       }
     }
     if (f.theme && !(a.themes || "").includes(f.theme)) return false;
-    if (f.source && a.source !== f.source) return false;
+    if (f.source && a.source !== f.source && !(a.aussi || []).some(x => x.source === f.source)) return false;
     if (f.onlyNew && !a.nouveau) return false;
     if (txt && !norm(a.titre + " " + a.acheteur).includes(txt)) return false;
     return true;
@@ -634,12 +739,13 @@ if (typeof document !== "undefined") {
       return `<tr class="${a.nouveau ? "new" : ""}" data-pop="${a._i}">
         <td>${a.nouveau ? '<span class="tag">NEW</span>' : ""}</td>
         <td><span class="pill ${pillClass(a.score)}">${a.score}</span></td>
-        <td>${tags}</td><td><span class="tag">${esc(a.source)}</span></td>
+        <td>${tags}</td><td><span class="tag">${esc(a.source)}</span>${(a.aussi || []).map(x => `<span class="tag" title="Aussi publié sur ${esc(x.source)}">+${esc(x.source)}</span>`).join("")}</td>
         <td><a href="${esc(a.url)}" target="_blank" rel="noopener">${esc(a.titre)}</a></td>
         <td>${esc(a.acheteur)}</td><td>${esc(a.publie)}</td><td class="${cls}">${ech}</td></tr>`;
     }).join("");
     $("empty").hidden = current.length > 0;
     $("count").textContent = `${current.length} annonce(s) sur ${DATA.length}`;
+    $("shown").textContent = `${current.length} affichée(s) avec les filtres actuels`;
     renderSynth();
   }
 
@@ -689,8 +795,9 @@ if (typeof document !== "undefined") {
       ["Département", a.departement], ["Procédure", a.procedure], ["Montant estimé", a.montant],
       ["Publiée", a.publie],
       ["Date limite", a.echeance ? a.echeance + (daysBetween(today, a.echeance) >= 0 ? ` (J-${daysBetween(today, a.echeance)})` : "") : ""]
-    ].filter(([, v]) => v).map(([k, v]) => `<dt>${k}</dt><dd>${esc(v)}</dd>`).join("");
-    const lignes = a.detail.map(([m, p]) => [m, p, ""]);
+    ].filter(([, v]) => v).map(([k, v]) => `<dt>${k}</dt><dd>${esc(v)}</dd>`).join("")
+      + ((a.aussi || []).length ? `<dt>Aussi publié sur</dt><dd>${a.aussi.map(x => `<a href="${esc(x.url)}" target="_blank" rel="noopener">${esc(x.source)}</a>`).join(", ")}</dd>` : "");
+    const lignes = a.detail.map(([m, p, o]) => [o === "d" ? m + " (description)" : m, p, o === "d" ? "d" : ""]);
     if (a.bonus) lignes.push(["annonce de compétition (presse)", a.bonus, "b"]);
     const max = Math.max(1, ...lignes.map(l => l[1]));
     const why = lignes.length
@@ -756,9 +863,12 @@ if (typeof document !== "undefined") {
     $("fSource").value = ""; $("fSort").value = "score"; $("fText").value = ""; $("fNew").checked = false; render();
   });
   $("csv").addEventListener("click", () => {
-    const cols = ["nouveau", "score", "explication", "themes", "source", "titre", "acheteur", "departement", "procedure", "montant", "publie", "echeance", "url"];
+    const cols = ["nouveau", "score", "explication", "themes", "source", "titre", "acheteur", "departement", "procedure", "montant", "publie", "echeance", "url", "aussi_sur"];
     const q = v => '"' + String(v == null ? "" : v).replace(/"/g, '""') + '"';
-    current.forEach(r => { r.explication = r.detail.map(([m, p]) => `${m} (+${p})`).concat(r.bonus ? [`compétition presse (+${r.bonus})`] : []).join(", "); });
+    current.forEach(r => {
+      r.explication = r.detail.map(([m, p, o]) => `${m} (+${p}${o === "d" ? ", description" : ""})`).concat(r.bonus ? [`compétition presse (+${r.bonus})`] : []).join(", ");
+      r.aussi_sur = (r.aussi || []).map(x => x.url).join(" ");
+    });
     const csv = "\ufeff" + [cols.join(";")].concat(current.map(r => cols.map(c => q(r[c])).join(";"))).join("\r\n");
     const l = document.createElement("a");
     l.href = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
@@ -775,6 +885,7 @@ if (typeof document !== "undefined") {
 def exporter(annonces):
     for a in annonces:
         a["explication"] = explication(a)
+        a["aussi_sur"] = " ".join(x["url"] for x in a.get("aussi", []))
     with open("veille_com360.csv", "w", newline="", encoding="utf-8-sig") as f:
         w = csv.DictWriter(f, fieldnames=COLS, extrasaction="ignore", delimiter=";")
         w.writeheader()
@@ -786,6 +897,7 @@ def exporter(annonces):
     page = (HTML_TEMPLATE
             .replace("__DATE__", f"{date.today():%d/%m/%Y}")
             .replace("__STATUS__", html.escape("  |  ".join(SOURCES_STATUS)))
+            .replace("__FUNNEL__", html.escape(" → ".join(ENTONNOIR)))
             .replace("__DATA__", donnees))
     with open("veille_com360.html", "w", encoding="utf-8") as f:
         f.write(page)
@@ -808,8 +920,14 @@ def main():
             print(f"[{nom}] ERREUR : {e}", file=sys.stderr)
             SOURCES_STATUS.append(f"{nom} : ERREUR ({str(e)[:90]})")
 
-    uniques = {a["id"]: a for a in toutes}.values()
+    uniques = list({a["id"]: a for a in toutes}.values())
+    uniques, nb_fusions = fusionner_doublons(uniques)
     retenues = [a for a in uniques if a["score"] >= SCORE_MINI and encore_ouvert(a)]
+    ENTONNOIR.append(f"{len(toutes)} annonces récupérées")
+    if nb_fusions:
+        ENTONNOIR.append(f"{nb_fusions} doublon(s) BOAMP/TED fusionné(s)")
+    ENTONNOIR.append(f"{len(retenues)} retenues (score {SCORE_MINI}+ et encore ouvertes)")
+    print("Tri : " + " -> ".join(ENTONNOIR))
     marquer_nouveaux(retenues)
     if args.nouveaux:
         retenues = [a for a in retenues if a["nouveau"]]
