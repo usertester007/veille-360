@@ -87,7 +87,7 @@ THEMES = {
     "Pub / RP / event": ["publicite", "relations presse", "evenementiel", "activation", "notoriete"],
 }
 
-SCORE_MINI = 5
+SCORE_MINI = 3  # seuil bas : la page filtre ensuite (5+ par defaut)
 
 # Flux RSS presse / veille (ajoutez les votres, verifiez les URL de flux)
 FLUX_RSS = [
@@ -311,25 +311,216 @@ SOURCES_STATUS = []
 COLS = ["nouveau", "score", "themes", "source", "titre", "acheteur", "publie", "echeance", "url"]
 
 
+HTML_TEMPLATE = r"""<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Veille consultations agences 360</title>
+<style>
+  :root { --bg:#fafaf7; --fg:#1d1d1b; --mut:#6b6b66; --line:#e2e1da; --card:#fff; --acc:#1a56db; --new:#fff4c2; --warn:#c2410c; --s1:#e8e7e0; --s2:#dbeafe; --s3:#bbf7d0; --s4:#fde68a; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#171716; --fg:#ecebe6; --mut:#9b9a93; --line:#33332f; --card:#202020; --acc:#6ea0ff; --new:#4a4210; --warn:#fb923c; --s1:#2d2d2a; --s2:#1e3a5f; --s3:#14532d; --s4:#713f12; }
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:15px/1.5 system-ui,-apple-system,Segoe UI,sans-serif; }
+  main { max-width:1200px; margin:0 auto; padding:24px 16px 64px; }
+  h1 { font-size:22px; margin:0 0 2px; }
+  .sub { color:var(--mut); font-size:13px; margin:0 0 16px; }
+  .filters { display:grid; grid-template-columns:repeat(auto-fit,minmax(170px,1fr)); gap:12px; background:var(--card); border:1px solid var(--line); border-radius:10px; padding:14px; margin-bottom:12px; }
+  label { display:flex; flex-direction:column; font-size:12px; color:var(--mut); gap:4px; }
+  select,input[type=text] { font:inherit; padding:7px 9px; border:1px solid var(--line); border-radius:7px; background:var(--bg); color:var(--fg); width:100%; }
+  .chk { flex-direction:row; align-items:center; gap:8px; font-size:14px; color:var(--fg); padding-top:18px; }
+  .bar { display:flex; justify-content:space-between; align-items:center; margin:8px 0; font-size:13px; color:var(--mut); gap:8px; flex-wrap:wrap; }
+  button { font:inherit; font-size:13px; padding:6px 12px; border-radius:7px; border:1px solid var(--acc); background:transparent; color:var(--acc); cursor:pointer; }
+  .wrap { overflow-x:auto; border:1px solid var(--line); border-radius:10px; background:var(--card); }
+  table { border-collapse:collapse; width:100%; min-width:900px; }
+  th,td { text-align:left; padding:9px 12px; border-bottom:1px solid var(--line); vertical-align:top; font-size:14px; }
+  th { font-size:12px; color:var(--mut); font-weight:600; white-space:nowrap; }
+  tr.new td { background:var(--new); }
+  a { color:var(--acc); text-decoration:none; } a:hover { text-decoration:underline; }
+  .tag { font-size:11px; padding:1px 7px; border-radius:99px; border:1px solid var(--line); color:var(--mut); display:inline-block; margin:0 3px 3px 0; white-space:nowrap; }
+  .pill { font-weight:600; padding:2px 9px; border-radius:99px; display:inline-block; }
+  .p1 { background:var(--s1); } .p2 { background:var(--s2); } .p3 { background:var(--s3); } .p4 { background:var(--s4); }
+  .soon { color:var(--warn); font-weight:600; }
+  .empty { padding:28px; text-align:center; color:var(--mut); }
+</style>
+</head>
+<body>
+<main>
+  <h1>Consultations agences 360</h1>
+  <p class="sub">Mise à jour du __DATE__ &middot; __STATUS__</p>
+
+  <div class="filters">
+    <label>Pertinence
+      <select id="fScore">
+        <option value="3">Toutes</option>
+        <option value="5" selected>Pertinentes (5+)</option>
+        <option value="8">Bonnes (8+)</option>
+        <option value="12">Fortes (12+)</option>
+        <option value="18">Très fortes (18+)</option>
+      </select>
+    </label>
+    <label>Publiée
+      <select id="fPub">
+        <option value="0">Toutes dates</option>
+        <option value="2">Depuis 48 h</option>
+        <option value="7">7 derniers jours</option>
+        <option value="14">14 derniers jours</option>
+        <option value="30">30 derniers jours</option>
+      </select>
+    </label>
+    <label>Date limite
+      <select id="fEch">
+        <option value="all">Toutes</option>
+        <option value="7">Dans les 7 jours</option>
+        <option value="14">Dans les 14 jours</option>
+        <option value="30">Dans les 30 jours</option>
+        <option value="30+">Dans plus de 30 jours</option>
+        <option value="none">Non renseignée</option>
+      </select>
+    </label>
+    <label>Thème <select id="fTheme"><option value="">Tous</option></select></label>
+    <label>Source <select id="fSource"><option value="">Toutes</option></select></label>
+    <label>Trier par
+      <select id="fSort">
+        <option value="score">Pertinence</option>
+        <option value="pub">Publication récente</option>
+        <option value="ech">Date limite proche</option>
+      </select>
+    </label>
+    <label>Recherche <input type="text" id="fText" placeholder="acheteur, mot..."></label>
+    <label class="chk"><input type="checkbox" id="fNew"> Nouveautés seulement</label>
+  </div>
+
+  <div class="bar">
+    <span id="count"></span>
+    <span><button id="reset">Réinitialiser</button> <button id="csv">Export CSV</button></span>
+  </div>
+
+  <div class="wrap">
+    <table>
+      <thead><tr><th></th><th>Score</th><th>Thèmes</th><th>Source</th><th>Objet</th><th>Acheteur</th><th>Publiée</th><th>Date limite</th></tr></thead>
+      <tbody id="rows"></tbody>
+    </table>
+    <div id="empty" class="empty" hidden>Aucune annonce ne correspond à ces filtres.</div>
+  </div>
+</main>
+
+<script>
+const DATA = __DATA__;
+
+function norm(s) {
+  return (s || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+}
+function daysBetween(a, b) { // b - a, en jours
+  return Math.round((new Date(b + "T00:00:00") - new Date(a + "T00:00:00")) / 864e5);
+}
+function filtrer(rows, f, today) {
+  const txt = norm(f.text);
+  const out = rows.filter(a => {
+    if (a.score < f.score) return false;
+    if (f.pub > 0 && (!a.publie || daysBetween(a.publie, today) > f.pub)) return false;
+    if (f.ech !== "all") {
+      if (f.ech === "none") { if (a.echeance) return false; }
+      else {
+        if (!a.echeance) return false;
+        const d = daysBetween(today, a.echeance);
+        if (f.ech === "30+") { if (d <= 30) return false; }
+        else if (d > parseInt(f.ech, 10)) return false;
+      }
+    }
+    if (f.theme && !(a.themes || "").includes(f.theme)) return false;
+    if (f.source && a.source !== f.source) return false;
+    if (f.onlyNew && !a.nouveau) return false;
+    if (txt && !norm(a.titre + " " + a.acheteur).includes(txt)) return false;
+    return true;
+  });
+  const key = {
+    score: (x, y) => y.score - x.score || (y.publie || "").localeCompare(x.publie || ""),
+    pub:   (x, y) => (y.publie || "").localeCompare(x.publie || "") || y.score - x.score,
+    ech:   (x, y) => (x.echeance || "9999").localeCompare(y.echeance || "9999") || y.score - x.score
+  }[f.sort];
+  return out.sort(key);
+}
+if (typeof globalThis !== "undefined") globalThis.filtrer = filtrer;
+
+if (typeof document !== "undefined") {
+  const $ = id => document.getElementById(id);
+  const esc = s => String(s == null ? "" : s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+  const today = new Date().toISOString().slice(0, 10);
+  let current = [];
+
+  const themes = new Set(), sources = new Set();
+  DATA.forEach(a => { (a.themes || "").split(" | ").filter(Boolean).forEach(t => themes.add(t)); sources.add(a.source); });
+  [...themes].sort().forEach(t => $("fTheme").insertAdjacentHTML("beforeend", `<option>${esc(t)}</option>`));
+  [...sources].sort().forEach(s => $("fSource").insertAdjacentHTML("beforeend", `<option>${esc(s)}</option>`));
+
+  const ids = ["fScore", "fPub", "fEch", "fTheme", "fSource", "fSort", "fText", "fNew"];
+  const read = () => ({
+    score: +$("fScore").value, pub: +$("fPub").value, ech: $("fEch").value,
+    theme: $("fTheme").value, source: $("fSource").value, sort: $("fSort").value,
+    text: $("fText").value, onlyNew: $("fNew").checked
+  });
+  const pillClass = s => s >= 18 ? "p4" : s >= 12 ? "p3" : s >= 8 ? "p2" : "p1";
+
+  function render() {
+    current = filtrer(DATA, read(), today);
+    $("rows").innerHTML = current.map(a => {
+      let ech = "—", cls = "";
+      if (a.echeance) {
+        const d = daysBetween(today, a.echeance);
+        ech = esc(a.echeance) + (d >= 0 ? ` (J-${d})` : "");
+        if (d <= 7) cls = "soon";
+      }
+      const tags = (a.themes || "").split(" | ").filter(Boolean).map(t => `<span class="tag">${esc(t)}</span>`).join("");
+      return `<tr class="${a.nouveau ? "new" : ""}">
+        <td>${a.nouveau ? '<span class="tag">NEW</span>' : ""}</td>
+        <td><span class="pill ${pillClass(a.score)}">${a.score}</span></td>
+        <td>${tags}</td><td><span class="tag">${esc(a.source)}</span></td>
+        <td><a href="${esc(a.url)}" target="_blank" rel="noopener">${esc(a.titre)}</a></td>
+        <td>${esc(a.acheteur)}</td><td>${esc(a.publie)}</td><td class="${cls}">${ech}</td></tr>`;
+    }).join("");
+    $("empty").hidden = current.length > 0;
+    $("count").textContent = `${current.length} annonce(s) sur ${DATA.length}`;
+  }
+
+  ids.forEach(id => $(id).addEventListener("input", render));
+  $("reset").addEventListener("click", () => {
+    $("fScore").value = "5"; $("fPub").value = "0"; $("fEch").value = "all"; $("fTheme").value = "";
+    $("fSource").value = ""; $("fSort").value = "score"; $("fText").value = ""; $("fNew").checked = false; render();
+  });
+  $("csv").addEventListener("click", () => {
+    const cols = ["nouveau", "score", "themes", "source", "titre", "acheteur", "publie", "echeance", "url"];
+    const q = v => '"' + String(v == null ? "" : v).replace(/"/g, '""') + '"';
+    const csv = "\ufeff" + [cols.join(";")].concat(current.map(r => cols.map(c => q(r[c])).join(";"))).join("\r\n");
+    const l = document.createElement("a");
+    l.href = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+    l.download = "veille_360_" + today + ".csv"; l.click();
+  });
+  render();
+}
+</script>
+</body>
+</html>
+"""
+
+
 def exporter(annonces):
     with open("veille_com360.csv", "w", newline="", encoding="utf-8-sig") as f:
         w = csv.DictWriter(f, fieldnames=COLS, extrasaction="ignore", delimiter=";")
         w.writeheader()
         w.writerows(annonces)
 
-    lignes = "".join(
-        f"<tr class='{'new' if a['nouveau'] else ''}'><td>{'NEW' if a['nouveau'] else ''}</td>"
-        f"<td>{a['score']}</td><td>{html.escape(a['themes'])}</td><td>{a['source']}</td>"
-        f"<td><a href='{html.escape(a['url'])}'>{html.escape(a['titre'])}</a></td>"
-        f"<td>{html.escape(a['acheteur'])}</td><td>{a['publie']}</td><td>{a['echeance']}</td></tr>"
-        for a in annonces)
-    page = f"""<!doctype html><meta charset='utf-8'><title>Veille 360</title>
-<style>body{{font:14px system-ui;margin:2rem}}table{{border-collapse:collapse;width:100%}}
-td,th{{border-bottom:1px solid #ddd;padding:6px 8px;text-align:left}}.new{{background:#fff8d6}}</style>
-<h1>Consultations agences 360 - {date.today():%d/%m/%Y}</h1>
-<p style='color:#666'>{html.escape('  |  '.join(SOURCES_STATUS))}</p>
-<table><tr><th></th><th>Score</th><th>Thèmes</th><th>Source</th><th>Objet</th><th>Acheteur</th><th>Publie</th><th>Echeance</th></tr>
-{lignes}</table>"""
+    import json
+    data = [{k: x.get(k, "") for k in ("nouveau", "score", "themes", "source", "titre",
+                                       "acheteur", "publie", "echeance", "url")}
+            for x in annonces]
+    donnees = json.dumps(data, ensure_ascii=False).replace("</", "<\\/")
+    page = (HTML_TEMPLATE
+            .replace("__DATE__", f"{date.today():%d/%m/%Y}")
+            .replace("__STATUS__", html.escape("  |  ".join(SOURCES_STATUS)))
+            .replace("__DATA__", donnees))
     with open("veille_com360.html", "w", encoding="utf-8") as f:
         f.write(page)
 
