@@ -87,6 +87,7 @@ THEMES = {
     "Pub / RP / event": ["publicite", "relations presse", "evenementiel", "activation", "notoriete"],
 }
 
+BONUS_PRESSE = 6  # ajoute aux articles de presse qui annoncent une competition
 SCORE_MINI = 3  # seuil bas : la page filtre ensuite (5+ par defaut)
 
 # Flux RSS presse / veille (ajoutez les votres, verifiez les URL de flux)
@@ -108,11 +109,41 @@ def normaliser(txt: str) -> str:
     return re.sub(r"\s+", " ", txt.lower().replace("\u2019", "'")).strip()
 
 
-def scorer(texte: str) -> int:
+def analyser_score(texte: str):
+    """Renvoie (score, [[mot, poids], ...] tries par poids, mot_exclu)."""
     t = normaliser(texte)
-    if any(m in t for m in MOTS_EXCLUS):
-        return 0
-    return sum(poids for mot, poids in MOTS_CLES.items() if mot in t)
+    exclu = next((m for m in MOTS_EXCLUS if m in t), "")
+    if exclu:
+        return 0, [], exclu
+    detail = sorted(([mot, poids] for mot, poids in MOTS_CLES.items() if mot in t),
+                    key=lambda x: -x[1])
+    return sum(p for _, p in detail), detail, ""
+
+
+def scorer(texte: str) -> int:
+    return analyser_score(texte)[0]
+
+
+def nettoyer(txt) -> str:
+    """Retire le HTML eventuel (resumes RSS) et compacte les espaces."""
+    txt = html.unescape(re.sub(r"<[^>]+>", " ", str(txt or "")))
+    return re.sub(r"\s+", " ", txt).strip()
+
+
+def _liste(v) -> str:
+    if isinstance(v, list):
+        return ", ".join(str(x) for x in v if x)
+    return "" if v is None else str(v)
+
+
+def _format_montant(v) -> str:
+    try:
+        n = float(str(v).replace(" ", "").replace("\u00a0", "").replace(",", "."))
+    except ValueError:
+        return ""
+    if n < 1000:  # en dessous, c'est rarement un montant de marche
+        return ""
+    return f"{n:,.0f} \u20ac HT".replace(",", " ")
 
 
 def detecter_themes(texte: str) -> str:
@@ -120,13 +151,26 @@ def detecter_themes(texte: str) -> str:
     return " | ".join(n for n, mots in THEMES.items() if any(m in t for m in mots))
 
 
-def annonce(source, ident, titre, acheteur, publie, echeance, url, extrait=""):
+def annonce(source, ident, titre, acheteur, publie, echeance, url, extrait="",
+            description="", departement="", procedure="", montant=""):
+    score, detail, exclu = analyser_score(f"{titre} {extrait}")
+    titre = nettoyer(titre)
+    description = nettoyer(description or extrait)
+    if normaliser(description) == normaliser(titre):
+        description = ""
     return {
         "themes": detecter_themes(f"{titre} {extrait}"),
-        "source": source, "id": f"{source}:{ident}", "titre": (titre or "").strip(),
-        "acheteur": (acheteur or "").strip(), "publie": publie or "",
+        "source": source, "id": f"{source}:{ident}", "titre": titre,
+        "acheteur": nettoyer(acheteur), "publie": publie or "",
         "echeance": echeance or "", "url": url or "",
-        "score": scorer(f"{titre} {extrait}"),
+        "score": score,
+        # infos affichees dans la popin
+        "detail": detail,          # mots-cles detectes et leur poids
+        "bonus": 0,                # bonus eventuel (annonce presse de competition)
+        "exclu": exclu,
+        "description": description[:700],
+        "departement": nettoyer(departement), "procedure": nettoyer(procedure),
+        "montant": montant or "",
     }
 
 
@@ -135,6 +179,45 @@ def annonce(source, ident, titre, acheteur, publie, echeance, url, extrait=""):
 # --------------------------------------------------------------------------
 BOAMP_URL = ("https://boamp-datadila.opendatasoft.com/api/explore/v2.1/"
              "catalog/datasets/boamp/records")
+
+
+def _parcourir(obj):
+    """Parcourt un JSON imbrique et renvoie des couples (cle, valeur feuille)."""
+    if isinstance(obj, dict):
+        for k, v in obj.items():
+            if isinstance(v, (dict, list)):
+                if isinstance(v, dict) and "#text" in v:
+                    yield k, v["#text"]
+                yield from _parcourir(v)
+            else:
+                yield k, v
+    elif isinstance(obj, list):
+        for v in obj:
+            yield from _parcourir(v)
+
+
+def _infos_boamp(donnees):
+    """Extrait (description, montant) du JSON complet de l'avis, si present.
+    Le format varie selon les avis : tout est en 'meilleur effort'."""
+    import json
+    if isinstance(donnees, str):
+        try:
+            donnees = json.loads(donnees)
+        except ValueError:
+            return "", ""
+    if not isinstance(donnees, (dict, list)):
+        return "", ""
+    description, montant = "", ""
+    for cle, val in _parcourir(donnees):
+        k = str(cle).upper()
+        if not description and isinstance(val, str) and len(val) > 60 and (
+                "DESCRIPTION" in k or "OBJET_COMPLET" in k or k in ("OBJET", "OBJET_MARCHE")):
+            description = val
+        if not montant and ("VALEUR" in k or "MONTANT" in k) and "DEVISE" not in k:
+            montant = _format_montant(val)
+        if description and montant:
+            break
+    return description, montant
 
 
 def source_boamp(jours: int):
@@ -161,12 +244,19 @@ def source_boamp(jours: int):
                 if ident in vus:
                     continue
                 vus.add(ident)
+                description, montant = _infos_boamp(x.get("donnees"))
+                procedure = " / ".join(filter(None, [
+                    _liste(x.get("procedure_libelle") or x.get("type_procedure")),
+                    _liste(x.get("nature_libelle"))]))
                 resultats.append(annonce(
                     "BOAMP", ident, x.get("objet"), x.get("nomacheteur"),
                     (x.get("dateparution") or "")[:10],
                     (x.get("datelimitereponse") or "")[:10],
                     x.get("url_avis") or f"https://www.boamp.fr/pages/avis/?q=idweb:{ident}",
-                    str(x.get("descripteur_libelle") or ""),
+                    _liste(x.get("descripteur_libelle")),
+                    description=description,
+                    departement=_liste(x.get("code_departement")),
+                    procedure=procedure, montant=montant,
                 ))
             offset += 100
     return resultats
@@ -176,6 +266,12 @@ def source_boamp(jours: int):
 # Source 2 : TED (API v3 de recherche)
 # --------------------------------------------------------------------------
 TED_URL = "https://api.ted.europa.eu/v3/notices/search"
+CHAMPS_TED = ["publication-number", "notice-title", "buyer-name",
+              "publication-date", "deadline-receipt-tender-date-lot", "links"]
+# Champs utilises pour la popin de detail (facultatifs : repli automatique si refuses)
+CHAMPS_TED_DETAIL = ["description-proc", "description-lot", "procedure-type",
+                     "estimated-value-proc", "estimated-value-lot",
+                     "place-of-performance-subdiv-lot"]
 
 
 def _txt(v):
@@ -194,11 +290,15 @@ def source_ted(jours: int):
     corps = {
         "query": (f"classification-cpv IN (79340000 79341000 79341100 79341200 79341400 79342000 79822500 92111200 72413000 79416000) "
                   f"AND buyer-country=FRA AND publication-date>={depuis}"),
-        "fields": ["publication-number", "notice-title", "buyer-name",
-                   "publication-date", "deadline-receipt-tender-date-lot", "links"],
+        "fields": CHAMPS_TED + CHAMPS_TED_DETAIL,
         "limit": 100, "page": 1, "scope": "ALL",
     }
     r = requests.post(TED_URL, json=corps, headers=HEADERS, timeout=TIMEOUT)
+    if r.status_code == 400:
+        # un champ de detail n'est pas reconnu par l'API : on retente sans eux
+        print("  [TED] champs de detail refuses, repli sur les champs de base", file=sys.stderr)
+        corps["fields"] = CHAMPS_TED
+        r = requests.post(TED_URL, json=corps, headers=HEADERS, timeout=TIMEOUT)
     if not r.ok:
         raise RuntimeError(f"HTTP {r.status_code} - {r.text[:300]}")
     out = []
@@ -209,6 +309,10 @@ def source_ted(jours: int):
             str(_txt(n.get("publication-date")))[:10],
             str(_txt(n.get("deadline-receipt-tender-date-lot")))[:10],
             f"https://ted.europa.eu/fr/notice/-/detail/{num}",
+            description=_txt(n.get("description-lot")) or _txt(n.get("description-proc")),
+            departement=_txt(n.get("place-of-performance-subdiv-lot")),
+            procedure=_txt(n.get("procedure-type")),
+            montant=_format_montant(_txt(n.get("estimated-value-proc")) or _txt(n.get("estimated-value-lot"))),
         ))
     return out
 
@@ -279,7 +383,8 @@ def source_presse(jours: int):
             a = annonce("PRESSE", e.get("link"), titre, media, pub, "", e.get("link"),
                         e.get("summary", ""))
             if not any(m in nt for m in MOTS_EXCLUS):
-                a["score"] += 6  # une annonce de competition/pitch est deja pertinente en soi
+                a["score"] += BONUS_PRESSE  # une annonce de competition/pitch est deja pertinente en soi
+                a["bonus"] = BONUS_PRESSE
             out[a["id"]] = a
     if erreurs == len(flux_urls):
         raise RuntimeError("aucun flux presse accessible")
@@ -308,7 +413,17 @@ def marquer_nouveaux(annonces):
 
 
 SOURCES_STATUS = []
-COLS = ["nouveau", "score", "themes", "source", "titre", "acheteur", "publie", "echeance", "url"]
+COLS = ["nouveau", "score", "explication", "themes", "source", "titre", "acheteur",
+        "departement", "procedure", "montant", "publie", "echeance", "url"]
+CHAMPS_PAGE = ["nouveau", "score", "detail", "bonus", "themes", "source", "titre", "acheteur",
+               "description", "departement", "procedure", "montant", "publie", "echeance", "url"]
+
+
+def explication(a) -> str:
+    parts = [f"{m} (+{p})" for m, p in a.get("detail", [])]
+    if a.get("bonus"):
+        parts.append(f"competition presse (+{a['bonus']})")
+    return ", ".join(parts)
 
 
 HTML_TEMPLATE = r"""<!doctype html>
@@ -344,12 +459,53 @@ HTML_TEMPLATE = r"""<!doctype html>
   .p1 { background:var(--s1); } .p2 { background:var(--s2); } .p3 { background:var(--s3); } .p4 { background:var(--s4); }
   .soon { color:var(--warn); font-weight:600; }
   .empty { padding:28px; text-align:center; color:var(--mut); }
+
+  /* Bandeau de synthese */
+  .synth { display:grid; grid-template-columns:minmax(150px,.7fr) 1fr 1.3fr; gap:12px; margin-bottom:12px; }
+  @media (max-width:860px) { .synth { grid-template-columns:1fr; } }
+  .box { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:12px 14px; min-width:0; }
+  .box h2 { font-size:13px; font-weight:600; color:var(--mut); margin:0 0 6px; display:flex; justify-content:space-between; align-items:baseline; gap:8px; }
+  .box h2 button { font-size:12px; padding:2px 8px; }
+  .big { font-size:34px; font-weight:700; line-height:1.1; }
+  .big small { font-size:13px; font-weight:400; color:var(--mut); display:block; margin-top:4px; }
+  .mini { list-style:none; margin:0; padding:0; }
+  .mini li { display:flex; gap:8px; align-items:baseline; padding:4px 0; border-top:1px solid var(--line); font-size:13px; }
+  .mini li:first-child { border-top:0; }
+  .mini a { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--fg); }
+  .mini .k { flex:none; font-size:12px; color:var(--mut); min-width:34px; }
+  .mini .k.soon { color:var(--warn); }
+  .mini .none { color:var(--mut); }
+
+  /* Popin de detail */
+  tr[data-pop] { cursor:default; }
+  tr[data-pop]:hover td { background:color-mix(in srgb, var(--acc) 6%, transparent); }
+  tr.new[data-pop]:hover td { background:var(--new); }
+  .pop { position:absolute; z-index:50; width:380px; max-width:calc(100vw - 16px); background:var(--card); color:var(--fg);
+         border:1px solid var(--line); border-radius:10px; padding:14px 16px; font-size:13px;
+         box-shadow:0 10px 30px rgba(0,0,0,.18); }
+  .pop[hidden] { display:none; }
+  .pop h3 { font-size:14px; margin:0 0 2px; line-height:1.35; }
+  .pop .who { color:var(--mut); margin:0 0 10px; }
+  .pop dl { display:grid; grid-template-columns:auto 1fr; gap:3px 12px; margin:0 0 10px; }
+  .pop dt { color:var(--mut); } .pop dd { margin:0; }
+  .pop .desc { margin:0 0 10px; color:var(--fg); max-height:7.5em; overflow:auto; }
+  .pop .why { border-top:1px solid var(--line); padding-top:10px; }
+  .pop .why-h { display:flex; align-items:center; gap:8px; margin-bottom:6px; font-weight:600; }
+  .pop .why-row { display:grid; grid-template-columns:1fr 70px 30px; gap:8px; align-items:center; padding:2px 0; }
+  .pop .why-row span:last-child { text-align:right; font-variant-numeric:tabular-nums; color:var(--mut); }
+  .pop .gauge { height:6px; border-radius:3px; background:var(--s1); overflow:hidden; }
+  .pop .gauge i { display:block; height:100%; background:var(--acc); }
+  .pop .gauge.b i { background:var(--warn); }
+  .pop .hint { color:var(--mut); font-size:12px; margin:10px 0 0; }
+  @media (prefers-reduced-motion:no-preference) { .pop { transition:opacity .12s; } }
 </style>
 </head>
 <body>
 <main>
   <h1>Consultations agences 360</h1>
   <p class="sub">Mise à jour du __DATE__ &middot; __STATUS__</p>
+
+  <section class="synth" id="synth" aria-label="Synthèse"></section>
 
   <div class="filters">
     <label>Pertinence
@@ -451,6 +607,7 @@ if (typeof document !== "undefined") {
   const today = new Date().toISOString().slice(0, 10);
   let current = [];
 
+  DATA.forEach((a, i) => { a._i = i; a.detail = a.detail || []; });
   const themes = new Set(), sources = new Set();
   DATA.forEach(a => { (a.themes || "").split(" | ").filter(Boolean).forEach(t => themes.add(t)); sources.add(a.source); });
   [...themes].sort().forEach(t => $("fTheme").insertAdjacentHTML("beforeend", `<option>${esc(t)}</option>`));
@@ -474,7 +631,7 @@ if (typeof document !== "undefined") {
         if (d <= 7) cls = "soon";
       }
       const tags = (a.themes || "").split(" | ").filter(Boolean).map(t => `<span class="tag">${esc(t)}</span>`).join("");
-      return `<tr class="${a.nouveau ? "new" : ""}">
+      return `<tr class="${a.nouveau ? "new" : ""}" data-pop="${a._i}">
         <td>${a.nouveau ? '<span class="tag">NEW</span>' : ""}</td>
         <td><span class="pill ${pillClass(a.score)}">${a.score}</span></td>
         <td>${tags}</td><td><span class="tag">${esc(a.source)}</span></td>
@@ -483,7 +640,115 @@ if (typeof document !== "undefined") {
     }).join("");
     $("empty").hidden = current.length > 0;
     $("count").textContent = `${current.length} annonce(s) sur ${DATA.length}`;
+    renderSynth();
   }
+
+  // ---------- Bandeau de synthese (suit le filtre Pertinence) ----------
+  function renderSynth() {
+    const mini = +$("fScore").value;
+    const base = DATA.filter(a => a.score >= mini);
+    const nouv = base.filter(a => a.nouveau);
+    const semaine = base.filter(a => a.echeance && daysBetween(today, a.echeance) >= 0 && daysBetween(today, a.echeance) <= 7)
+                        .sort((x, y) => x.echeance.localeCompare(y.echeance) || y.score - x.score);
+    const top = [...base].sort((x, y) => y.score - x.score || (y.publie || "").localeCompare(x.publie || "")).slice(0, 5);
+    const item = (a, k, kcls = "") => `<li data-pop="${a._i}"><span class="k ${kcls}">${k}</span>
+      <a href="${esc(a.url)}" target="_blank" rel="noopener">${esc(a.titre)}</a></li>`;
+    const liste = (arr, f, vide) => arr.length ? `<ul class="mini">${arr.map(f).join("")}</ul>` : `<p class="mini none">${vide}</p>`;
+    $("synth").innerHTML = `
+      <div class="box">
+        <h2>Nouvelles annonces ${nouv.length ? '<button data-act="new">Afficher</button>' : ""}</h2>
+        <div class="big">${nouv.length}<small>depuis le dernier passage</small></div>
+      </div>
+      <div class="box">
+        <h2>Échéances cette semaine ${semaine.length ? '<button data-act="week">Afficher</button>' : ""}</h2>
+        ${liste(semaine.slice(0, 5), a => { const d = daysBetween(today, a.echeance); return item(a, d === 0 ? "auj." : "J-" + d, d <= 3 ? "soon" : ""); }, "Aucune date limite dans les 7 jours.")}
+      </div>
+      <div class="box">
+        <h2>Top 5 des scores</h2>
+        ${liste(top, a => item(a, `<span class="pill ${pillClass(a.score)}">${a.score}</span>`), "Aucune annonce à ce niveau de pertinence.")}
+      </div>`;
+  }
+  $("synth").addEventListener("click", e => {
+    const b = e.target.closest("button[data-act]");
+    if (!b) return;
+    if (b.dataset.act === "new") { $("fNew").checked = true; }
+    if (b.dataset.act === "week") { $("fEch").value = "7"; $("fSort").value = "ech"; }
+    render();
+    $("rows").closest(".wrap").scrollIntoView({ behavior: "smooth", block: "start" });
+  });
+
+  // ---------- Popin de detail au survol ----------
+  const pop = document.createElement("div");
+  pop.className = "pop"; pop.hidden = true; pop.setAttribute("role", "tooltip");
+  document.body.appendChild(pop);
+  let popFor = null, tShow = 0, tHide = 0, mouseX = 0;
+  const noHover = matchMedia("(hover: none)").matches;
+
+  function popHTML(a) {
+    const infos = [
+      ["Département", a.departement], ["Procédure", a.procedure], ["Montant estimé", a.montant],
+      ["Publiée", a.publie],
+      ["Date limite", a.echeance ? a.echeance + (daysBetween(today, a.echeance) >= 0 ? ` (J-${daysBetween(today, a.echeance)})` : "") : ""]
+    ].filter(([, v]) => v).map(([k, v]) => `<dt>${k}</dt><dd>${esc(v)}</dd>`).join("");
+    const lignes = a.detail.map(([m, p]) => [m, p, ""]);
+    if (a.bonus) lignes.push(["annonce de compétition (presse)", a.bonus, "b"]);
+    const max = Math.max(1, ...lignes.map(l => l[1]));
+    const why = lignes.length
+      ? lignes.map(([m, p, c]) => `<div class="why-row"><span>${esc(m)}</span><span class="gauge ${c}"><i style="width:${Math.round(p / max * 100)}%"></i></span><span>+${p}</span></div>`).join("")
+      : `<p class="hint">Aucun mot-clé détaillé pour cette annonce.</p>`;
+    const desc = a.description ? `<p class="desc">${esc(a.description.length > 450 ? a.description.slice(0, 450) + "…" : a.description)}</p>` : "";
+    return `<h3>${esc(a.titre)}</h3>
+      <p class="who">${esc(a.acheteur || "Acheteur non renseigné")} – ${esc(a.source)}</p>
+      ${desc}${infos ? `<dl>${infos}</dl>` : ""}
+      <div class="why"><div class="why-h">Pourquoi ce score <span class="pill ${pillClass(a.score)}">${a.score}</span></div>${why}</div>
+      <p class="hint">${noHover ? "Touchez le titre pour ouvrir l’annonce." : "Cliquez sur le titre pour ouvrir l’annonce."}</p>`;
+  }
+  function showPop(el) {
+    const a = DATA[+el.dataset.pop];
+    if (!a) return;
+    popFor = el;
+    pop.innerHTML = popHTML(a);
+    pop.hidden = false;
+    const r = el.getBoundingClientRect(), pw = pop.offsetWidth, ph = pop.offsetHeight;
+    const anchorX = el.tagName === "TR" ? mouseX - 60 : r.left;
+    const left = Math.min(Math.max(8, anchorX), innerWidth - pw - 8);
+    let top = r.bottom + 6;
+    if (top + ph > innerHeight - 8 && r.top - ph - 6 > 8) top = r.top - ph - 6;
+    pop.style.left = left + scrollX + "px";
+    pop.style.top = top + scrollY + "px";
+  }
+  function hidePop() { pop.hidden = true; popFor = null; }
+
+  if (!noHover) {
+    document.addEventListener("mousemove", e => { mouseX = e.clientX; }, { passive: true });
+    document.addEventListener("mouseover", e => {
+      if (pop.contains(e.target)) { clearTimeout(tHide); return; }
+      const el = e.target.closest("[data-pop]");
+      clearTimeout(tShow);
+      if (el) {
+        clearTimeout(tHide);
+        if (el !== popFor) tShow = setTimeout(() => showPop(el), popFor ? 60 : 280);
+      } else if (popFor) {
+        tHide = setTimeout(hidePop, 180);
+      }
+    });
+    pop.addEventListener("mouseleave", () => { tHide = setTimeout(hidePop, 180); });
+  } else {
+    // Ecran tactile : on touche la ligne (hors lien) pour afficher le detail
+    document.addEventListener("click", e => {
+      if (pop.contains(e.target)) return;
+      const el = e.target.closest("[data-pop]");
+      if (el && !e.target.closest("a")) { el === popFor ? hidePop() : showPop(el); }
+      else if (!el) hidePop();
+    });
+  }
+  // Clavier : le detail s'affiche quand le lien de l'annonce a le focus
+  document.addEventListener("focusin", e => {
+    const el = e.target.closest && e.target.closest("[data-pop]");
+    if (el) { const r = el.getBoundingClientRect(); mouseX = r.left + 60; showPop(el); }
+  });
+  document.addEventListener("keydown", e => { if (e.key === "Escape") hidePop(); });
+  addEventListener("scroll", () => { if (popFor && noHover) hidePop(); }, { passive: true });
 
   ids.forEach(id => $(id).addEventListener("input", render));
   $("reset").addEventListener("click", () => {
@@ -491,8 +756,9 @@ if (typeof document !== "undefined") {
     $("fSource").value = ""; $("fSort").value = "score"; $("fText").value = ""; $("fNew").checked = false; render();
   });
   $("csv").addEventListener("click", () => {
-    const cols = ["nouveau", "score", "themes", "source", "titre", "acheteur", "publie", "echeance", "url"];
+    const cols = ["nouveau", "score", "explication", "themes", "source", "titre", "acheteur", "departement", "procedure", "montant", "publie", "echeance", "url"];
     const q = v => '"' + String(v == null ? "" : v).replace(/"/g, '""') + '"';
+    current.forEach(r => { r.explication = r.detail.map(([m, p]) => `${m} (+${p})`).concat(r.bonus ? [`compétition presse (+${r.bonus})`] : []).join(", "); });
     const csv = "\ufeff" + [cols.join(";")].concat(current.map(r => cols.map(c => q(r[c])).join(";"))).join("\r\n");
     const l = document.createElement("a");
     l.href = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
@@ -507,15 +773,15 @@ if (typeof document !== "undefined") {
 
 
 def exporter(annonces):
+    for a in annonces:
+        a["explication"] = explication(a)
     with open("veille_com360.csv", "w", newline="", encoding="utf-8-sig") as f:
         w = csv.DictWriter(f, fieldnames=COLS, extrasaction="ignore", delimiter=";")
         w.writeheader()
         w.writerows(annonces)
 
     import json
-    data = [{k: x.get(k, "") for k in ("nouveau", "score", "themes", "source", "titre",
-                                       "acheteur", "publie", "echeance", "url")}
-            for x in annonces]
+    data = [{k: x.get(k, "") for k in CHAMPS_PAGE} for x in annonces]
     donnees = json.dumps(data, ensure_ascii=False).replace("</", "<\\/")
     page = (HTML_TEMPLATE
             .replace("__DATE__", f"{date.today():%d/%m/%Y}")
