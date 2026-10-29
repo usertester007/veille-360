@@ -741,7 +741,7 @@ ENTONNOIR = []
 COLS = ["nouveau", "score", "explication", "themes", "source", "titre", "acheteur",
         "departement", "procedure", "montant", "publie", "echeance", "url", "depot",
         "contact_mail", "aussi_sur"]
-CHAMPS_PAGE = ["nouveau", "score", "detail", "bonus", "themes", "source", "titre", "acheteur",
+CHAMPS_PAGE = ["id", "nouveau", "score", "detail", "bonus", "themes", "source", "titre", "acheteur",
                "description", "departement", "procedure", "montant", "publie", "echeance", "url",
                "aussi", "depot", "contact", "lots"]
 
@@ -850,6 +850,14 @@ HTML_TEMPLATE = r"""<!doctype html>
   .panel .lot span:last-child { color:var(--mut); white-space:nowrap; font-variant-numeric:tabular-nums; }
   .panel .warn { color:var(--warn); }
   .dep { display:inline-block; margin-top:4px; font-size:12px; }
+  /* Favoris */
+  :root { --fav:#d99a00; } @media (prefers-color-scheme: dark) { :root { --fav:#fbbf24; } }
+  .star { border:0; background:transparent; padding:2px 4px; font-size:18px; line-height:1; color:var(--mut); cursor:pointer; border-radius:6px; }
+  .star:hover { color:var(--fav); background:transparent; }
+  .star[aria-pressed="true"] { color:var(--fav); }
+  .star:focus-visible { outline:2px solid var(--acc); outline-offset:1px; }
+  td.c0 { white-space:nowrap; }
+  .panel-top .star { font-size:16px; }
   /* Ecrans etroits : le volet devient un tiroir en bas de l'ecran */
   @media (max-width:1100px) {
     .layout { grid-template-columns:1fr; }
@@ -907,6 +915,7 @@ HTML_TEMPLATE = r"""<!doctype html>
     </label>
     <label>Recherche <input type="text" id="fText" placeholder="acheteur, mot..."></label>
     <label class="chk"><input type="checkbox" id="fNew"> Nouveautés seulement</label>
+    <label class="chk"><input type="checkbox" id="fFav"> <span id="fFavLbl">Favoris seulement</span></label>
   </div>
 
   <div class="bar">
@@ -923,7 +932,7 @@ HTML_TEMPLATE = r"""<!doctype html>
     <div id="empty" class="empty" hidden>Aucune annonce ne correspond à ces filtres.</div>
   </div>
   <aside class="panel" id="panel" aria-live="polite" aria-label="Détail de l’annonce">
-    <div class="panel-top"><span id="pState">Aperçu au survol</span>
+    <div class="panel-top"><span><span id="pStar"></span> <span id="pState">Aperçu au survol</span></span>
       <span class="acts"><button id="pPin" hidden>Épingler</button><button id="pClose">Fermer</button></span></div>
     <div class="panel-body" id="pBody"><p class="vide">Survolez une annonce pour afficher son détail ici.<br>Cliquez sur la ligne pour garder ce détail affiché pendant que vous parcourez la liste.</p></div>
   </aside>
@@ -956,6 +965,7 @@ function filtrer(rows, f, today) {
     if (f.theme && !(a.themes || "").includes(f.theme)) return false;
     if (f.source && a.source !== f.source && !(a.aussi || []).some(x => x.source === f.source)) return false;
     if (f.onlyNew && !a.nouveau) return false;
+    if (f.onlyFav && !a.fav) return false;
     if (txt && !norm(a.titre + " " + a.acheteur).includes(txt)) return false;
     return true;
   });
@@ -975,17 +985,26 @@ if (typeof document !== "undefined") {
   let current = [];
   let selI = -1, pinned = false;   // annonce affichee dans le volet / volet fige
 
-  DATA.forEach((a, i) => { a._i = i; a.detail = a.detail || []; });
+  // ---------- Favoris (memorises dans ce navigateur, d'un lancement a l'autre) ----------
+  const CLE_FAV = "veille360:favoris";
+  let favoris = new Set();
+  try { favoris = new Set(JSON.parse(localStorage.getItem(CLE_FAV) || "[]")); } catch (e) { favoris = new Set(); }
+  function sauverFavoris() {
+    try { localStorage.setItem(CLE_FAV, JSON.stringify([...favoris])); } catch (e) { /* stockage indisponible : favoris valables pour cette session */ }
+  }
+  const etoile = a => `<button class="star" data-fav="${a._i}" aria-pressed="${a.fav ? "true" : "false"}" title="${a.fav ? "Retirer des favoris" : "Ajouter aux favoris"}" aria-label="${a.fav ? "Retirer des favoris" : "Ajouter aux favoris"}">${a.fav ? "★" : "☆"}</button>`;
+
+  DATA.forEach((a, i) => { a._i = i; a.detail = a.detail || []; a.fav = favoris.has(a.id); });
   const themes = new Set(), sources = new Set();
   DATA.forEach(a => { (a.themes || "").split(" | ").filter(Boolean).forEach(t => themes.add(t)); sources.add(a.source); });
   [...themes].sort().forEach(t => $("fTheme").insertAdjacentHTML("beforeend", `<option>${esc(t)}</option>`));
   [...sources].sort().forEach(s => $("fSource").insertAdjacentHTML("beforeend", `<option>${esc(s)}</option>`));
 
-  const ids = ["fScore", "fPub", "fEch", "fTheme", "fSource", "fSort", "fText", "fNew"];
+  const ids = ["fScore", "fPub", "fEch", "fTheme", "fSource", "fSort", "fText", "fNew", "fFav"];
   const read = () => ({
     score: +$("fScore").value, pub: +$("fPub").value, ech: $("fEch").value,
     theme: $("fTheme").value, source: $("fSource").value, sort: $("fSort").value,
-    text: $("fText").value, onlyNew: $("fNew").checked
+    text: $("fText").value, onlyNew: $("fNew").checked, onlyFav: $("fFav").checked
   });
   const hote = u => { try { return new URL(u).hostname.replace(/^www\./, ""); } catch (e) { return "la plateforme"; } };
   const pillClass = s => s >= 18 ? "p4" : s >= 12 ? "p3" : s >= 8 ? "p2" : "p1";
@@ -1001,7 +1020,7 @@ if (typeof document !== "undefined") {
       }
       const tags = (a.themes || "").split(" | ").filter(Boolean).map(t => `<span class="tag">${esc(t)}</span>`).join("");
       return `<tr class="${a.nouveau ? "new" : ""}${a._i === selI ? " sel" : ""}${a._i === selI && pinned ? " pin" : ""}" data-pop="${a._i}">
-        <td>${a.nouveau ? '<span class="tag">NEW</span>' : ""}</td>
+        <td class="c0">${etoile(a)}${a.nouveau ? '<span class="tag">NEW</span>' : ""}</td>
         <td><span class="pill ${pillClass(a.score)}">${a.score}</span></td>
         <td>${tags}</td><td><span class="tag">${esc(a.source)}</span>${(a.aussi || []).map(x => `<span class="tag" title="Aussi publié sur ${esc(x.source)}">+${esc(x.source)}</span>`).join("")}</td>
         <td><a href="${esc(a.url)}" target="_blank" rel="noopener">${esc(a.titre)}</a>${a.depot ? `<br><a class="dep" href="${esc(a.depot)}" target="_blank" rel="noopener">Déposer sur ${esc(hote(a.depot))}</a>` : ""}</td>
@@ -1009,6 +1028,8 @@ if (typeof document !== "undefined") {
     }).join("");
     $("empty").hidden = current.length > 0;
     $("count").textContent = `${current.length} annonce(s) sur ${DATA.length}`;
+    const nbFav = DATA.filter(a => a.fav).length;
+    $("fFavLbl").textContent = nbFav ? `Favoris seulement (${nbFav})` : "Favoris seulement";
     $("shown").textContent = `${current.length} affichée(s) avec les filtres actuels`;
     renderSynth();
   }
@@ -1096,6 +1117,7 @@ if (typeof document !== "undefined") {
     $("pState").textContent = pinned ? "Épinglée" : "Aperçu au survol";
     $("pState").className = pinned ? "pinned" : "";
     $("pPin").hidden = false;
+    $("pStar").innerHTML = etoile(a);
     $("pPin").textContent = pinned ? "Libérer" : "Épingler";
     document.querySelectorAll("#rows tr").forEach(tr => {
       const on = +tr.dataset.pop === selI;
@@ -1123,6 +1145,16 @@ if (typeof document !== "undefined") {
     if (pinned && i === selI) liberer(); else afficher(i, true);
   });
   $("pPin").addEventListener("click", () => pinned ? liberer() : afficher(selI, true));
+  document.addEventListener("click", e => {
+    const b = e.target.closest("button[data-fav]");
+    if (!b) return;
+    const a = DATA[+b.dataset.fav];
+    a.fav = !a.fav;
+    a.fav ? favoris.add(a.id) : favoris.delete(a.id);
+    sauverFavoris();
+    render();
+    if (selI === a._i) $("pStar").innerHTML = etoile(a);
+  });
   $("pClose").addEventListener("click", () => { $("panel").classList.remove("open"); liberer(); });
   // Clavier : le volet suit le lien qui a le focus
   document.addEventListener("focusin", e => {
@@ -1136,10 +1168,10 @@ if (typeof document !== "undefined") {
   ids.forEach(id => $(id).addEventListener("input", render));
   $("reset").addEventListener("click", () => {
     $("fScore").value = "5"; $("fPub").value = "0"; $("fEch").value = "all"; $("fTheme").value = "";
-    $("fSource").value = ""; $("fSort").value = "score"; $("fText").value = ""; $("fNew").checked = false; render();
+    $("fSource").value = ""; $("fSort").value = "score"; $("fText").value = ""; $("fNew").checked = false; $("fFav").checked = false; render();
   });
   $("csv").addEventListener("click", () => {
-    const cols = ["nouveau", "score", "explication", "themes", "source", "titre", "acheteur", "departement", "procedure", "montant", "publie", "echeance", "url", "depot", "contact_mail", "aussi_sur"];
+    const cols = ["fav", "nouveau", "score", "explication", "themes", "source", "titre", "acheteur", "departement", "procedure", "montant", "publie", "echeance", "url", "depot", "contact_mail", "aussi_sur"];
     const q = v => '"' + String(v == null ? "" : v).replace(/"/g, '""') + '"';
     current.forEach(r => {
       r.explication = r.detail.map(([m, p, o]) => `${m} (+${p}${o === "d" ? ", description" : ""})`).concat(r.bonus ? [`compétition presse (+${r.bonus})`] : []).join(", ");
