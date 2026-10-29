@@ -59,6 +59,11 @@ MOTS_CLES = {
     "production de films": 7, "realisation de films": 7, "contenus video": 5,
     "film publicitaire": 8, "motion design": 5, "podcast": 4, "video": 3, "film": 2,
     "contenus editoriaux": 4, "creation de contenus": 4,
+    # photo
+    # ("reportage photo" couvre aussi "reportage photographique")
+    "reportage photo": 6, "reportages photo": 6, "photographe": 5, "shooting": 5,
+    "photographique": 4, "photographie": 4, "prise de vue": 4, "prises de vue": 4,
+    "prises de vues": 4, "phototheque": 3, "banque d'images": 3, "photos": 2,
     # digital / site
     "refonte du site": 6, "refonte de site": 6, "refonte site": 6, "refonte des sites": 6,
     "refonte": 2, "creation de site": 5, "creation d'un site": 5, "creation du site": 5,
@@ -85,6 +90,8 @@ MOTS_EXCLUS = [
     "maintenance", "nettoyage", "gmao", "videosurveillance", "video-surveillance",
     "videoprotection", "visioconference", "telecommunication", "communications electroniques",
     "location de", "fourniture de", "travaux de", "securite incendie",
+    # faux amis de la photo
+    "photocopi", "photovolta", "orthophoto", "photogrammetr", "photo d'identite", "photomaton",
 ]
 # Exclusions levees si l'un de ces mots est aussi present
 # ("refonte et maintenance du site" = projet web a garder ; "maintenance du site" seule = TMA, ecartee)
@@ -95,7 +102,9 @@ EXCLUS_SAUF_SI = {
 THEMES = {
     "360 / campagne": ["360", "campagne", "agence de communication", "agence conseil", "agence creative", "communication globale", "plan de communication", "strategie de communication"],
     "Marque / branding": ["marque", "branding", "identite visuelle", "charte graphique", "rebranding", "positionnement"],
-    "Video": ["video", "film", "audiovisuel", "motion design", "podcast"],
+    "Video / photo": ["video", "film", "audiovisuel", "motion design", "podcast", "photographi",
+                      "photographe", "reportage photo", "reportages photo", "shooting", "prise de vue",
+                      "prises de vue", "phototheque", "banque d'images"],
     "Site / digital": ["site internet", "site web", "sites internet", "sites web", "refonte", "digital",
                        "rgaa", "portail", "webdesign", "web design", "ux design", "cms", "wordpress",
                        "drupal", "site vitrine", "site institutionnel", "developpement web"],
@@ -461,6 +470,7 @@ def source_boamp(jours: int):
     requetes = ["communication", "agence", "campagne", "publicite", "marque", "branding",
                 "identite visuelle", "video", "film", "refonte", "site internet", "site web",
                 "portail", "web", "wordpress", "drupal",
+                "photo", "photographie", "photographique", "photographe", "reportage",
                 "influence", "reseaux sociaux", "creation graphique", "marketing", "podcast"]
     for mot in requetes:
         offset = 0
@@ -530,7 +540,7 @@ def _txt(v):
 def source_ted(jours: int):
     depuis = (date.today() - timedelta(days=jours)).strftime("%Y%m%d")
     corps = {
-        "query": (f"classification-cpv IN (79340000 79341000 79341100 79341200 79341400 79342000 79822500 92111200 72413000 72420000 72421000 72212224 79416000) "
+        "query": (f"classification-cpv IN (79340000 79341000 79341100 79341200 79341400 79342000 79822500 92111200 72413000 72420000 72421000 72212224 79416000 79961000 79961100) "
                   f"AND buyer-country=FRA AND publication-date>={depuis}"),
         "fields": CHAMPS_TED + CHAMPS_TED_DETAIL + CHAMPS_TED_PRATIQUE,
         "limit": 100, "page": 1, "scope": "ALL",
@@ -793,42 +803,61 @@ HTML_TEMPLATE = r"""<!doctype html>
   .mini .k.soon { color:var(--warn); }
   .mini.none { color:var(--mut); font-size:13px; margin:0; }
 
-  /* Popin de detail */
-  tr[data-pop] { cursor:default; }
+  /* Volet de detail a droite */
+  main { max-width:1560px; }
+  .layout { display:grid; grid-template-columns:minmax(0,1fr) 390px; gap:16px; align-items:start; }
+  table { min-width:760px; }
+  tr[data-pop] { cursor:pointer; }
   tr[data-pop]:hover td { background:color-mix(in srgb, var(--acc) 6%, transparent); }
   tr.new[data-pop]:hover td { background:var(--new); }
-  .pop { position:absolute; z-index:50; width:380px; max-width:calc(100vw - 16px); background:var(--card); color:var(--fg);
-         border:1px solid var(--line); border-radius:10px; padding:14px 16px; font-size:13px;
-         box-shadow:0 10px 30px rgba(0,0,0,.18); }
-  .pop[hidden] { display:none; }
-  .pop h3 { font-size:14px; margin:0 0 2px; line-height:1.35; }
-  .pop .who { color:var(--mut); margin:0 0 10px; }
-  .pop dl { display:grid; grid-template-columns:auto 1fr; gap:3px 12px; margin:0 0 10px; }
-  .pop dt { color:var(--mut); } .pop dd { margin:0; }
-  .pop .desc { margin:0 0 10px; color:var(--fg); max-height:7.5em; overflow:auto; }
-  .pop .why { border-top:1px solid var(--line); padding-top:10px; }
-  .pop .why-h { display:flex; align-items:center; gap:8px; margin-bottom:6px; font-weight:600; }
-  .pop .why-row { display:grid; grid-template-columns:1fr 70px 30px; gap:8px; align-items:center; padding:2px 0; }
-  .pop .why-row span:last-child { text-align:right; font-variant-numeric:tabular-nums; color:var(--mut); }
-  .pop .gauge { height:6px; border-radius:3px; background:var(--s1); overflow:hidden; }
-  .pop .gauge i { display:block; height:100%; background:var(--acc); }
-  .pop .gauge.b i { background:var(--warn); }
-  .pop .gauge.d i { background:color-mix(in srgb, var(--acc) 45%, var(--s1)); }
-  .pop .hint { color:var(--mut); font-size:12px; margin:10px 0 0; }
-  .pop { max-height:75vh; overflow:auto; }
-  .pop .go { display:block; text-align:center; background:var(--acc); color:#fff; border-radius:7px; padding:8px 10px; font-weight:600; margin:0 0 6px; }
-  @media (prefers-color-scheme: dark) { .pop .go { color:#0d1b33; } }
-  .pop .go:hover { text-decoration:none; filter:brightness(1.08); }
-  .pop .go-note { color:var(--mut); font-size:12px; margin:0 0 10px; }
-  .pop .blk { border-top:1px solid var(--line); padding-top:10px; margin-top:10px; }
-  .pop .blk-h { font-weight:600; margin-bottom:6px; }
-  .pop .ct { display:grid; grid-template-columns:auto 1fr; gap:3px 12px; margin:0; }
-  .pop .lot { display:grid; grid-template-columns:auto 1fr auto; gap:8px; padding:3px 0; align-items:baseline; }
-  .pop .lot b { font-weight:600; color:var(--mut); font-size:12px; }
-  .pop .lot span:last-child { color:var(--mut); white-space:nowrap; font-variant-numeric:tabular-nums; }
-  .pop .warn { color:var(--warn); }
+  tr.sel td { background:color-mix(in srgb, var(--acc) 10%, transparent); }
+  tr.sel td:first-child { box-shadow:inset 3px 0 0 var(--acc); }
+  tr.sel.pin td:first-child { box-shadow:inset 5px 0 0 var(--acc); }
+  li[data-pop] { cursor:pointer; }
+  .panel { position:sticky; top:12px; max-height:calc(100vh - 24px); overflow:auto; background:var(--card); color:var(--fg);
+           border:1px solid var(--line); border-radius:10px; font-size:13px; }
+  .panel-top { position:sticky; top:0; z-index:1; display:flex; align-items:center; justify-content:space-between; gap:8px;
+               padding:8px 12px 8px 16px; background:var(--card); border-bottom:1px solid var(--line); color:var(--mut); font-size:12px; }
+  .panel-top .acts { display:flex; gap:6px; }
+  .panel-top button { font-size:12px; padding:3px 9px; }
+  .panel-top .pinned { color:var(--acc); font-weight:600; }
+  #pClose { display:none; }
+  .panel-body { padding:14px 16px 16px; }
+  .panel .vide { color:var(--mut); line-height:1.6; margin:0; }
+  .panel h3 { font-size:15px; margin:0 0 2px; line-height:1.35; }
+  .panel .who { color:var(--mut); margin:0 0 12px; }
+  .panel dl { display:grid; grid-template-columns:auto 1fr; gap:3px 12px; margin:0 0 10px; }
+  .panel dt { color:var(--mut); } .panel dd { margin:0; overflow-wrap:anywhere; }
+  .panel .desc { margin:0 0 10px; color:var(--fg); }
+  .panel .why-h { display:flex; align-items:center; gap:8px; margin-bottom:6px; font-weight:600; }
+  .panel .why-row { display:grid; grid-template-columns:1fr 70px 30px; gap:8px; align-items:center; padding:2px 0; }
+  .panel .why-row span:last-child { text-align:right; font-variant-numeric:tabular-nums; color:var(--mut); }
+  .panel .gauge { height:6px; border-radius:3px; background:var(--s1); overflow:hidden; }
+  .panel .gauge i { display:block; height:100%; background:var(--acc); }
+  .panel .gauge.b i { background:var(--warn); }
+  .panel .gauge.d i { background:color-mix(in srgb, var(--acc) 45%, var(--s1)); }
+  .panel .hint { color:var(--mut); font-size:12px; margin:10px 0 0; }
+  .panel .go { display:block; text-align:center; background:var(--acc); color:#fff; border-radius:7px; padding:9px 10px; font-weight:600; margin:0 0 6px; }
+  @media (prefers-color-scheme: dark) { .panel .go { color:#0d1b33; } }
+  .panel .go:hover { text-decoration:none; filter:brightness(1.08); }
+  .panel .go2 { display:block; text-align:center; border:1px solid var(--line); border-radius:7px; padding:7px 10px; margin:0 0 6px; }
+  .panel .go-note { color:var(--mut); font-size:12px; margin:0 0 12px; }
+  .panel .blk { border-top:1px solid var(--line); padding-top:10px; margin-top:10px; }
+  .panel .blk-h { font-weight:600; margin-bottom:6px; }
+  .panel .ct { display:grid; grid-template-columns:auto 1fr; gap:3px 12px; margin:0; }
+  .panel .lot { display:grid; grid-template-columns:auto 1fr auto; gap:8px; padding:3px 0; align-items:baseline; }
+  .panel .lot b { font-weight:600; color:var(--mut); font-size:12px; }
+  .panel .lot span:last-child { color:var(--mut); white-space:nowrap; font-variant-numeric:tabular-nums; }
+  .panel .warn { color:var(--warn); }
   .dep { display:inline-block; margin-top:4px; font-size:12px; }
-  @media (prefers-reduced-motion:no-preference) { .pop { transition:opacity .12s; } }
+  /* Ecrans etroits : le volet devient un tiroir en bas de l'ecran */
+  @media (max-width:1100px) {
+    .layout { grid-template-columns:1fr; }
+    .panel { position:fixed; left:8px; right:8px; bottom:8px; top:auto; max-height:72vh; z-index:40;
+             box-shadow:0 -8px 30px rgba(0,0,0,.2); display:none; }
+    .panel.open { display:block; }
+    #pClose { display:inline-block; }
+  }
 </style>
 </head>
 <body>
@@ -885,12 +914,19 @@ HTML_TEMPLATE = r"""<!doctype html>
     <span><button id="reset">Réinitialiser</button> <button id="csv">Export CSV</button></span>
   </div>
 
+  <div class="layout">
   <div class="wrap">
     <table>
       <thead><tr><th></th><th>Score</th><th>Thèmes</th><th>Source</th><th>Objet</th><th>Acheteur</th><th>Publiée</th><th>Date limite</th></tr></thead>
       <tbody id="rows"></tbody>
     </table>
     <div id="empty" class="empty" hidden>Aucune annonce ne correspond à ces filtres.</div>
+  </div>
+  <aside class="panel" id="panel" aria-live="polite" aria-label="Détail de l’annonce">
+    <div class="panel-top"><span id="pState">Aperçu au survol</span>
+      <span class="acts"><button id="pPin" hidden>Épingler</button><button id="pClose">Fermer</button></span></div>
+    <div class="panel-body" id="pBody"><p class="vide">Survolez une annonce pour afficher son détail ici.<br>Cliquez sur la ligne pour garder ce détail affiché pendant que vous parcourez la liste.</p></div>
+  </aside>
   </div>
 </main>
 
@@ -937,6 +973,7 @@ if (typeof document !== "undefined") {
   const esc = s => String(s == null ? "" : s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
   const today = new Date().toISOString().slice(0, 10);
   let current = [];
+  let selI = -1, pinned = false;   // annonce affichee dans le volet / volet fige
 
   DATA.forEach((a, i) => { a._i = i; a.detail = a.detail || []; });
   const themes = new Set(), sources = new Set();
@@ -963,7 +1000,7 @@ if (typeof document !== "undefined") {
         if (d <= 7) cls = "soon";
       }
       const tags = (a.themes || "").split(" | ").filter(Boolean).map(t => `<span class="tag">${esc(t)}</span>`).join("");
-      return `<tr class="${a.nouveau ? "new" : ""}" data-pop="${a._i}">
+      return `<tr class="${a.nouveau ? "new" : ""}${a._i === selI ? " sel" : ""}${a._i === selI && pinned ? " pin" : ""}" data-pop="${a._i}">
         <td>${a.nouveau ? '<span class="tag">NEW</span>' : ""}</td>
         <td><span class="pill ${pillClass(a.score)}">${a.score}</span></td>
         <td>${tags}</td><td><span class="tag">${esc(a.source)}</span>${(a.aussi || []).map(x => `<span class="tag" title="Aussi publié sur ${esc(x.source)}">+${esc(x.source)}</span>`).join("")}</td>
@@ -1010,12 +1047,9 @@ if (typeof document !== "undefined") {
     $("rows").closest(".wrap").scrollIntoView({ behavior: "smooth", block: "start" });
   });
 
-  // ---------- Popin de detail au survol ----------
-  const pop = document.createElement("div");
-  pop.className = "pop"; pop.hidden = true; pop.setAttribute("role", "tooltip");
-  document.body.appendChild(pop);
-  let popFor = null, tShow = 0, tHide = 0, mouseX = 0;
-  const noHover = matchMedia("(hover: none)").matches;
+  // ---------- Volet de detail a droite ----------
+  const etroit = () => matchMedia("(max-width:1100px)").matches || matchMedia("(hover: none)").matches;
+  let tSurvol = 0;
 
   function popHTML(a) {
     const infos = [
@@ -1035,7 +1069,7 @@ if (typeof document !== "undefined") {
     let depot = "";
     if (a.depot) {
       depot = `<a class="go" href="${esc(a.depot)}" target="_blank" rel="noopener">Dossier et dépôt sur ${esc(hote(a.depot))}</a>
-        <p class="go-note">Les questions sur le contenu se posent aussi sur cette plateforme.</p>`;
+        <p class="go-note" style="margin-bottom:6px">Les questions sur le contenu se posent aussi sur cette plateforme.</p>`;
     } else if (a.source !== "PRESSE") {
       depot = `<p class="go-note warn">Lien de dépôt non trouvé : cherchez « profil d’acheteur » ou « adresse de présentation » dans l’avis.</p>`;
     }
@@ -1048,56 +1082,56 @@ if (typeof document !== "undefined") {
       ${a.lots.map(l => `<div class="lot"><b>Lot ${esc(l.num)}</b><span>${esc(l.titre)}</span><span>${l.max ? esc(l.max) + " max" : esc(l.estime || "")}</span></div>`).join("")}</div>` : "";
     return `<h3>${esc(a.titre)}</h3>
       <p class="who">${esc(a.acheteur || "Acheteur non renseigné")} – ${esc(a.source)}</p>
-      ${depot}${desc}${infos ? `<dl>${infos}</dl>` : ""}${lots}${contact}
+      ${depot}<a class="go2" href="${esc(a.url)}" target="_blank" rel="noopener">Voir l’avis complet (${esc(a.source)})</a>${desc}${infos ? `<dl>${infos}</dl>` : ""}${lots}${contact}
       <div class="why blk"><div class="why-h">Pourquoi ce score <span class="pill ${pillClass(a.score)}">${a.score}</span></div>${why}</div>
-      <p class="hint">${noHover ? "Touchez le titre pour ouvrir l’annonce." : "Cliquez sur le titre pour ouvrir l’annonce."}</p>`;
+`;
   }
-  function showPop(el) {
-    const a = DATA[+el.dataset.pop];
+  function afficher(i, figer) {
+    const a = DATA[i];
     if (!a) return;
-    popFor = el;
-    pop.innerHTML = popHTML(a);
-    pop.hidden = false;
-    const r = el.getBoundingClientRect(), pw = pop.offsetWidth, ph = pop.offsetHeight;
-    const anchorX = el.tagName === "TR" ? mouseX - 60 : r.left;
-    const left = Math.min(Math.max(8, anchorX), innerWidth - pw - 8);
-    let top = r.bottom + 6;
-    if (top + ph > innerHeight - 8 && r.top - ph - 6 > 8) top = r.top - ph - 6;
-    pop.style.left = left + scrollX + "px";
-    pop.style.top = top + scrollY + "px";
+    selI = i;
+    if (figer !== undefined) pinned = figer;
+    $("pBody").innerHTML = popHTML(a);
+    $("pBody").parentElement.scrollTop = 0;
+    $("pState").textContent = pinned ? "Épinglée" : "Aperçu au survol";
+    $("pState").className = pinned ? "pinned" : "";
+    $("pPin").hidden = false;
+    $("pPin").textContent = pinned ? "Libérer" : "Épingler";
+    document.querySelectorAll("#rows tr").forEach(tr => {
+      const on = +tr.dataset.pop === selI;
+      tr.classList.toggle("sel", on);
+      tr.classList.toggle("pin", on && pinned);
+    });
   }
-  function hidePop() { pop.hidden = true; popFor = null; }
+  function liberer() { if (selI >= 0) afficher(selI, false); }
 
-  if (!noHover) {
-    document.addEventListener("mousemove", e => { mouseX = e.clientX; }, { passive: true });
-    document.addEventListener("mouseover", e => {
-      if (pop.contains(e.target)) { clearTimeout(tHide); return; }
-      const el = e.target.closest("[data-pop]");
-      clearTimeout(tShow);
-      if (el) {
-        clearTimeout(tHide);
-        if (el !== popFor) tShow = setTimeout(() => showPop(el), popFor ? 60 : 280);
-      } else if (popFor) {
-        tHide = setTimeout(hidePop, 180);
-      }
-    });
-    pop.addEventListener("mouseleave", () => { tHide = setTimeout(hidePop, 180); });
-  } else {
-    // Ecran tactile : on touche la ligne (hors lien) pour afficher le detail
-    document.addEventListener("click", e => {
-      if (pop.contains(e.target)) return;
-      const el = e.target.closest("[data-pop]");
-      if (el && !e.target.closest("a")) { el === popFor ? hidePop() : showPop(el); }
-      else if (!el) hidePop();
-    });
-  }
-  // Clavier : le detail s'affiche quand le lien de l'annonce a le focus
+  // Survol : le volet suit l'annonce survolee (petit delai pour ignorer les passages rapides)
+  document.addEventListener("mouseover", e => {
+    if (etroit() || pinned) return;
+    const el = e.target.closest("[data-pop]");
+    if (!el || $("panel").contains(el)) return;
+    clearTimeout(tSurvol);
+    if (+el.dataset.pop !== selI) tSurvol = setTimeout(() => afficher(+el.dataset.pop), 120);
+  });
+  // Clic sur une ligne (hors liens) : epingle / libere ; sur ecran etroit, ouvre le tiroir
+  document.addEventListener("click", e => {
+    const el = e.target.closest("[data-pop]");
+    if (!el || e.target.closest("a, button")) return;
+    clearTimeout(tSurvol);
+    const i = +el.dataset.pop;
+    if (etroit()) { afficher(i, true); $("panel").classList.add("open"); return; }
+    if (pinned && i === selI) liberer(); else afficher(i, true);
+  });
+  $("pPin").addEventListener("click", () => pinned ? liberer() : afficher(selI, true));
+  $("pClose").addEventListener("click", () => { $("panel").classList.remove("open"); liberer(); });
+  // Clavier : le volet suit le lien qui a le focus
   document.addEventListener("focusin", e => {
     const el = e.target.closest && e.target.closest("[data-pop]");
-    if (el) { const r = el.getBoundingClientRect(); mouseX = r.left + 60; showPop(el); }
+    if (el && !pinned && !$("panel").contains(el)) afficher(+el.dataset.pop);
   });
-  document.addEventListener("keydown", e => { if (e.key === "Escape") hidePop(); });
-  addEventListener("scroll", () => { if (popFor && noHover) hidePop(); }, { passive: true });
+  document.addEventListener("keydown", e => {
+    if (e.key === "Escape") { $("panel").classList.remove("open"); liberer(); }
+  });
 
   ids.forEach(id => $(id).addEventListener("input", render));
   $("reset").addEventListener("click", () => {
