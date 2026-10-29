@@ -60,8 +60,17 @@ MOTS_CLES = {
     "film publicitaire": 8, "motion design": 5, "podcast": 4, "video": 3, "film": 2,
     "contenus editoriaux": 4, "creation de contenus": 4,
     # digital / site
-    "refonte du site": 6, "refonte de site": 6, "refonte site": 6, "creation de site": 5,
-    "site internet": 3, "site web": 3, "accessibilite numerique": 2, "rgaa": 2,
+    "refonte du site": 6, "refonte de site": 6, "refonte site": 6, "refonte des sites": 6,
+    "refonte": 2, "creation de site": 5, "creation d'un site": 5, "creation du site": 5,
+    "conception de site": 5, "conception d'un site": 5, "conception du site": 5,
+    "realisation d'un site": 5, "realisation du site": 5, "developpement du site": 4,
+    "developpement d'un site": 4, "nouveau site": 4, "site institutionnel": 5,
+    "site vitrine": 5, "site e-commerce": 4, "portail web": 4, "portail internet": 4,
+    "plateforme web": 3, "developpement web": 4, "webdesign": 5, "web design": 5,
+    "ux design": 4, "ui design": 4, "experience utilisateur": 3, "ergonomie": 2,
+    "wordpress": 3, "drupal": 3, "cms": 2,
+    "site internet": 4, "site web": 4, "sites internet": 4, "sites web": 4,
+    "accessibilite numerique": 2, "rgaa": 2,
     "marketing digital": 4, "strategie digitale": 5,
     # social / influence
     "reseaux sociaux": 4, "social media": 4, "community management": 4,
@@ -77,12 +86,19 @@ MOTS_EXCLUS = [
     "videoprotection", "visioconference", "telecommunication", "communications electroniques",
     "location de", "fourniture de", "travaux de", "securite incendie",
 ]
+# Exclusions levees si l'un de ces mots est aussi present
+# ("refonte et maintenance du site" = projet web a garder ; "maintenance du site" seule = TMA, ecartee)
+EXCLUS_SAUF_SI = {
+    "maintenance": ["refonte", "creation", "conception", "realisation d'un site", "nouveau site"],
+}
 # Themes affiches dans les resultats (un tag par theme detecte)
 THEMES = {
     "360 / campagne": ["360", "campagne", "agence de communication", "agence conseil", "agence creative", "communication globale", "plan de communication", "strategie de communication"],
     "Marque / branding": ["marque", "branding", "identite visuelle", "charte graphique", "rebranding", "positionnement"],
     "Video": ["video", "film", "audiovisuel", "motion design", "podcast"],
-    "Site / digital": ["site internet", "site web", "refonte", "digital", "rgaa"],
+    "Site / digital": ["site internet", "site web", "sites internet", "sites web", "refonte", "digital",
+                       "rgaa", "portail", "webdesign", "web design", "ux design", "cms", "wordpress",
+                       "drupal", "site vitrine", "site institutionnel", "developpement web"],
     "Social / influence": ["reseaux sociaux", "social media", "community", "influen", "tiktok", "instagram"],
     "Pub / RP / event": ["publicite", "relations presse", "evenementiel", "activation", "notoriete"],
 }
@@ -118,7 +134,8 @@ def normaliser(txt: str) -> str:
 def analyser_score(texte: str, exclusions: bool = True):
     """Renvoie (score, [[mot, poids], ...] tries par poids, mot_exclu)."""
     t = normaliser(texte)
-    exclu = next((m for m in MOTS_EXCLUS if m in t), "") if exclusions else ""
+    exclu = next((m for m in MOTS_EXCLUS if m in t
+                  and not any(x in t for x in EXCLUS_SAUF_SI.get(m, []))), "") if exclusions else ""
     if exclu:
         return 0, [], exclu
     detail = sorted(([mot, poids] for mot, poids in MOTS_CLES.items() if mot in t),
@@ -261,7 +278,8 @@ def source_boamp(jours: int):
     depuis = (date.today() - timedelta(days=jours)).isoformat()
     resultats, vus = [], set()
     requetes = ["communication", "agence", "campagne", "publicite", "marque", "branding",
-                "identite visuelle", "video", "film", "refonte", "site internet",
+                "identite visuelle", "video", "film", "refonte", "site internet", "site web",
+                "portail", "web", "wordpress", "drupal",
                 "influence", "reseaux sociaux", "creation graphique", "marketing", "podcast"]
     for mot in requetes:
         offset = 0
@@ -325,7 +343,7 @@ def _txt(v):
 def source_ted(jours: int):
     depuis = (date.today() - timedelta(days=jours)).strftime("%Y%m%d")
     corps = {
-        "query": (f"classification-cpv IN (79340000 79341000 79341100 79341200 79341400 79342000 79822500 92111200 72413000 79416000) "
+        "query": (f"classification-cpv IN (79340000 79341000 79341100 79341200 79341400 79342000 79822500 92111200 72413000 72420000 72421000 72212224 79416000) "
                   f"AND buyer-country=FRA AND publication-date>={depuis}"),
         "fields": CHAMPS_TED + CHAMPS_TED_DETAIL,
         "limit": 100, "page": 1, "scope": "ALL",
