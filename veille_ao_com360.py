@@ -14,7 +14,7 @@ Usage :
     pip install requests feedparser
     python veille_ao_com360.py                # 30 derniers jours
     python veille_ao_com360.py --jours 14
-    python veille_ao_com360.py --nouveaux     # uniquement ce qui n'a jamais ete vu
+    python veille_ao_com360.py --nouveaux     # uniquement les annonces reperees aujourd hui
 
 NB : les noms de champs des API BOAMP/TED peuvent evoluer. Si une source
 renvoie une erreur, le script continue avec les autres et affiche le detail.
@@ -727,11 +727,15 @@ def encore_ouvert(a) -> bool:
 def marquer_nouveaux(annonces):
     con = sqlite3.connect(DB_PATH)
     con.execute("CREATE TABLE IF NOT EXISTS vues (id TEXT PRIMARY KEY, vu_le TEXT)")
+    auj = date.today().isoformat()
     for a in annonces:
-        deja = con.execute("SELECT 1 FROM vues WHERE id=?", (a["id"],)).fetchone()
-        a["nouveau"] = not deja
+        deja = con.execute("SELECT vu_le FROM vues WHERE id=?", (a["id"],)).fetchone()
+        # "Nouvelle" = reperee pour la premiere fois aujourd'hui : relancer le script
+        # plusieurs fois dans la journee ne fait plus disparaitre les nouveautes du jour.
+        a["vu_le"] = deja[0] if deja else auj
+        a["nouveau"] = a["vu_le"] == auj
         if not deja:
-            con.execute("INSERT INTO vues VALUES (?, ?)", (a["id"], date.today().isoformat()))
+            con.execute("INSERT INTO vues VALUES (?, ?)", (a["id"], auj))
     con.commit()
     con.close()
 
@@ -741,7 +745,7 @@ ENTONNOIR = []
 COLS = ["nouveau", "score", "explication", "themes", "source", "titre", "acheteur",
         "departement", "procedure", "montant", "publie", "echeance", "url", "depot",
         "contact_mail", "aussi_sur"]
-CHAMPS_PAGE = ["id", "nouveau", "score", "detail", "bonus", "themes", "source", "titre", "acheteur",
+CHAMPS_PAGE = ["id", "nouveau", "vu_le", "score", "detail", "bonus", "themes", "source", "titre", "acheteur",
                "description", "departement", "procedure", "montant", "publie", "echeance", "url",
                "aussi", "depot", "contact", "lots"]
 
@@ -1048,7 +1052,7 @@ if (typeof document !== "undefined") {
     $("synth").innerHTML = `
       <div class="box">
         <h2>Nouvelles annonces ${nouv.length ? '<button data-act="new">Afficher</button>' : ""}</h2>
-        <div class="big">${nouv.length}<small>depuis le dernier passage</small></div>
+        <div class="big">${nouv.length}<small>repérées pour la première fois aujourd’hui</small></div>
       </div>
       <div class="box">
         <h2>Échéances cette semaine ${semaine.length ? '<button data-act="week">Afficher</button>' : ""}</h2>
@@ -1075,7 +1079,7 @@ if (typeof document !== "undefined") {
   function popHTML(a) {
     const infos = [
       ["Département", a.departement], ["Procédure", a.procedure], ["Montant estimé", a.montant],
-      ["Publiée", a.publie],
+      ["Publiée", a.publie], ["Repérée le", a.vu_le],
       ["Date limite", a.echeance ? a.echeance + (daysBetween(today, a.echeance) >= 0 ? ` (J-${daysBetween(today, a.echeance)})` : "") : ""]
     ].filter(([, v]) => v).map(([k, v]) => `<dt>${k}</dt><dd>${esc(v)}</dd>`).join("")
       + ((a.aussi || []).length ? `<dt>Aussi publié sur</dt><dd>${a.aussi.map(x => `<a href="${esc(x.url)}" target="_blank" rel="noopener">${esc(x.source)}</a>`).join(", ")}</dd>` : "");
@@ -1216,7 +1220,7 @@ def exporter(annonces):
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("--jours", type=int, default=30)
-    p.add_argument("--nouveaux", action="store_true", help="ne garder que les annonces jamais vues")
+    p.add_argument("--nouveaux", action="store_true", help="ne garder que les annonces reperees pour la premiere fois aujourd hui")
     args = p.parse_args()
 
     toutes = []
