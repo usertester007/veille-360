@@ -1146,8 +1146,10 @@ HTML_TEMPLATE = r"""<!doctype html>
   button:focus-visible, a:focus-visible { outline:2px solid var(--acc); outline-offset:2px; }
   .box h2 button { font-size:12px; padding:3px 9px; }
 
-  /* Grille de cartes : 4 a 5 par ligne sur grand ecran */
-  .grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(255px, 1fr)); gap:14px; }
+  /* Grille de cartes : 4 par ligne maximum, moins sur les ecrans plus etroits */
+  .grid { display:grid; grid-template-columns:repeat(4, minmax(0, 1fr)); gap:16px; }
+  @media (max-width:1250px) { .grid { grid-template-columns:repeat(3, minmax(0, 1fr)); } }
+  @media (max-width:920px)  { .grid { grid-template-columns:repeat(2, minmax(0, 1fr)); } }
   .card { --c:var(--acc); position:relative; display:flex; flex-direction:column; gap:10px; background:var(--card);
           border:1px solid var(--line); border-radius:14px; padding:14px 14px 12px; box-shadow:var(--shadow);
           cursor:pointer; transition:transform .15s, box-shadow .15s, border-color .15s; overflow:hidden; }
@@ -1173,6 +1175,8 @@ HTML_TEMPLATE = r"""<!doctype html>
   .star[aria-pressed="true"] { color:var(--fav); }
   .star[aria-pressed="true"] .ic { fill:currentColor; }
   .card h3 { font-size:15px; line-height:1.35; font-weight:650; margin:0; display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical; overflow:hidden; }
+  .desc-c { font-size:13px; line-height:1.5; color:var(--mut); margin:0; display:-webkit-box; -webkit-line-clamp:4;
+            -webkit-box-orient:vertical; overflow:hidden; }
   .who { display:flex; align-items:center; gap:6px; font-size:13px; color:var(--mut); min-width:0; }
   .who span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .meta { display:flex; flex-wrap:wrap; gap:6px; }
@@ -1462,6 +1466,7 @@ if (typeof document !== "undefined") {
       </div>
       <h3>${esc(a.titre)}</h3>
       <div class="who">${ic("building", "s")}<span>${esc(a.acheteur || "Acheteur non renseigné")}</span></div>
+      ${a.description ? `<p class="desc-c">${esc(a.description.slice(0, 400))}</p>` : ""}
       <div class="meta">${metas.join("")}</div>
       ${th.length ? `<div class="themes">${th.slice(0, 3).map(chip).join("")}${th.length > 3 ? `<span class="plus">+${th.length - 3}</span>` : ""}</div>` : ""}
       <div class="foot">${pri}<button class="btn sec" data-open="${a._i}">${ic("info", "s")}Détails</button>${ext}</div>
