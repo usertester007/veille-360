@@ -127,6 +127,122 @@ FLUX_RSS = [
     # "https://www.strategies.fr/rss.xml",
 ]
 
+# --------------------------------------------------------------------------
+# SITES A SURVEILLER : pages "appels d'offres" d'organismes qui publient leurs
+# consultations sur leur propre site (interprofessions, federations, URPS...).
+# Le script lit la page chaque jour et garde les liens qui parlent de consultation.
+# Ajoutez vos pages ici ; une page qui ne repond pas est signalee dans le terminal.
+# --------------------------------------------------------------------------
+SITES_A_SURVEILLER = [
+    {"nom": "Interbev (viande)", "url": "https://www.interbev.fr/interbev/appels-doffres/"},
+    {"nom": "CNIEL (filiere laitiere)", "url": "http://www.filiere-laitiere.fr/en/appels-doffres"},
+    {"nom": "Interfel (fruits et legumes)", "url": "https://interfel.e-marchepublics.com/"},
+]
+BONUS_SITE = 4  # lien qui parle explicitement de consultation, sur une page surveillee
+
+# Mots qui signalent une consultation dans un lien ou un bloc de texte
+MOTS_CONSULTATION = [
+    "appel d'offres", "appel d'offre", "appels d'offres", "appel a concurrence",
+    "appels a concurrence", "appel a candidatures", "appel a candidature", "mise en concurrence",
+    "mise en competition", "consultation", "cahier des charges", "reglement de consultation",
+    "recherche une agence", "recherche d'une agence", "selection d'une agence", "choix d'une agence",
+]
+
+# --------------------------------------------------------------------------
+# MARQUES A SUIVRE : pas d'appel d'offres publie, mais des SIGNAUX dans l'actualite
+# (nouveau directeur marketing, levee de fonds, rachat, changement d'identite...).
+# "precision" (facultatif) : mots ajoutes a la recherche pour eviter les homonymes.
+# --------------------------------------------------------------------------
+MARQUES_A_SUIVRE = [
+    # --- Marques d'Ile-de-France a potentiel digital (selection a qualifier) ---
+    # Maisons parisiennes historiques
+    {"marque": "Mariage Freres", "precision": "the"},
+    {"marque": "Kusmi Tea"},
+    {"marque": "Cire Trudon", "precision": "bougie OR bougies OR maison"},
+    {"marque": "Repetto", "precision": "ballerines OR danse OR mode"},
+    {"marque": "Le Tanneur", "precision": "maroquinerie OR sacs"},
+    {"marque": "Lancel", "precision": "maroquinerie OR sacs"},
+    {"marque": "Pylones", "precision": "boutique OR cadeaux OR objets"},
+    {"marque": "Christofle"},
+    # Boissons et food made in Paris / IDF
+    {"marque": "Paname Brewing"},
+    {"marque": "Brasserie de la Goutte d'Or"},
+    {"marque": "Distillerie de Paris"},
+    {"marque": "Maison Chateau Rouge"},
+    {"marque": "Le Slip Francais"},
+
+    # --- Grands groupes qui se developpent sur les tendances ---
+    # (type "groupe" : recherche et poids orientes nouvelles marques, tendances, acquisitions)
+    # Spiritueux, vins, bieres
+    {"marque": "Diageo", "type": "groupe"},
+    {"marque": "Pernod Ricard", "type": "groupe"},
+    {"marque": "Moet Hennessy", "type": "groupe"},
+    {"marque": "Remy Cointreau", "type": "groupe"},
+    {"marque": "Bacardi", "type": "groupe"},
+    {"marque": "Heineken", "type": "groupe"},
+    {"marque": "Kronenbourg", "type": "groupe"},
+    {"marque": "AB InBev", "type": "groupe"},
+    # Boissons et alimentaire
+    {"marque": "Coca-Cola", "type": "groupe"},
+    {"marque": "PepsiCo", "type": "groupe"},
+    {"marque": "Danone", "type": "groupe"},
+    {"marque": "Nestle", "type": "groupe"},
+    {"marque": "Mondelez", "type": "groupe"},
+    {"marque": "Unilever", "type": "groupe"},
+    {"marque": "Ferrero", "type": "groupe"},
+    {"marque": "Groupe Bel", "type": "groupe"},
+    {"marque": "Savencia", "type": "groupe"},
+    {"marque": "Lactalis", "type": "groupe"},
+    # Beaute
+    {"marque": "L'Oreal", "type": "groupe"},
+    {"marque": "Coty", "precision": "parfum OR beaute OR cosmetique", "type": "groupe"},
+]
+SIGNAUX_REQUETE = ('agence OR "appel d\'offres" OR "directeur marketing" OR "directrice marketing" '
+                   'OR "directeur de la communication" OR "directrice de la communication" OR "levee de fonds" '
+                   'OR rachat OR reprise OR "nouvelle identite" OR rebranding OR lancement OR recrute')
+# Grands groupes : on cherche les lancements de marques, les tendances et les acquisitions
+SIGNAUX_REQUETE_GROUPE = ('lance OR lancement OR "nouvelle marque" OR "sans alcool" OR tendance OR rachat '
+                          'OR acquisition OR "prise de participation" OR agence OR "appel d\'offres" '
+                          'OR "directeur marketing" OR "directrice marketing"')
+MOTS_SIGNAUX_GROUPE = {
+    # besoin d'agence explicite
+    "recherche une agence": 10, "lance une competition": 10, "change d'agence": 8,
+    "nouvelle agence": 6, "appel d'offres": 5, "confie son budget": 4, "retient l'agence": 3,
+    # nouvelles marques / produits
+    "lance une marque": 7, "lance sa marque": 6, "nouvelle marque": 6, "nouvelle boisson": 5,
+    "nouvelle gamme": 4, "edition limitee": 4, "lancement": 3, "lance ": 2, "en france": 2,
+    # tendances
+    "sans alcool": 5, "no-low": 5, "no & low": 5, "faible teneur": 5, "pret-a-boire": 5,
+    "pret a boire": 5, "ready to drink": 5, "ready-to-drink": 5, "premiumisation": 4,
+    "boisson fonctionnelle": 5, "proteine": 3, "vegetal": 3, "plant-based": 4, "vegan": 3,
+    "gen z": 4, "generation z": 4, "tiktok": 3, "influence": 3, "collaboration": 3,
+    "collab": 3, "pop-up": 4, "tendance": 2, "premium": 2,
+    # acquisitions de marques emergentes
+    "rachat": 4, "rachete": 4, "acquisition": 4, "acquiert": 4, "prise de participation": 4,
+    "start-up": 3, "startup": 3, "incubateur": 3,
+    # organisation marketing
+    "directeur marketing": 5, "directrice marketing": 5, "nouveau directeur": 3,
+    "nouvelle directrice": 3, "nomme": 2,
+}
+# Les grands groupes font beaucoup parler d'eux : seuil plus haut pour ne garder que les vrais signaux
+SEUIL_GROUPE = 7
+
+# Poids des signaux (meme principe que MOTS_CLES)
+MOTS_SIGNAUX = {
+    "recherche une agence": 10, "lance une competition": 10, "lance un appel d'offres": 10,
+    "consultation d'agences": 10, "change d'agence": 8, "nouvelle agence": 6,
+    "confie son budget": 3, "retient l'agence": 3, "choisit l'agence": 3,
+    "directeur marketing": 5, "directrice marketing": 5, "directeur de la communication": 5,
+    "directrice de la communication": 5, "directeur du marketing": 5, "directrice du marketing": 5,
+    "chief marketing officer": 5, "nomme": 2, "nomination": 2, "rejoint": 1,
+    "levee de fonds": 6, "leve ": 2, "millions d'euros": 2,
+    "rachat": 4, "rachete": 4, "reprise": 4, "repreneur": 4,
+    "rebranding": 5, "nouvelle identite": 5, "nouveau logo": 5, "change de nom": 5,
+    "e-commerce": 3, "boutique en ligne": 3, "site marchand": 3, "digital": 2,
+    "lancement": 2, "lance ": 1, "nouvelle gamme": 2, "international": 2, "export": 2,
+    "anniversaire": 2, "recrute": 2, "ouvre": 1, "croissance": 1,
+}
+
 DB_PATH = "veille_com360.sqlite"
 HEADERS = {"User-Agent": "veille-ao-com360/1.0 (usage interne)"}
 TIMEOUT = 30
@@ -136,8 +252,11 @@ TIMEOUT = 30
 # Utilitaires
 # --------------------------------------------------------------------------
 def normaliser(txt: str) -> str:
-    txt = unicodedata.normalize("NFKD", txt or "").encode("ascii", "ignore").decode()
-    return re.sub(r"\s+", " ", txt.lower().replace("\u2019", "'")).strip()
+    # apostrophes typographiques (’ ‘ ʼ) remplacees AVANT la suppression des accents,
+    # sinon "creation d’un site" devenait "creation dun site" et ne matchait plus
+    txt = re.sub("[\u2019\u2018\u02bc\u00b4`]", "'", txt or "")
+    txt = unicodedata.normalize("NFKD", txt).encode("ascii", "ignore").decode()
+    return re.sub(r"\s+", " ", txt.lower()).strip()
 
 
 def analyser_score(texte: str, exclusions: bool = True):
@@ -620,6 +739,205 @@ def _entrees_flux(url):
     return feedparser.parse(r.content).entries
 
 
+# ---- Sites surveilles ----------------------------------------------------
+MOIS_FR = {"janvier": 1, "fevrier": 2, "mars": 3, "avril": 4, "mai": 5, "juin": 6, "juillet": 7,
+           "aout": 8, "septembre": 9, "octobre": 10, "novembre": 11, "decembre": 12}
+DATE_NUM_RE = re.compile(r"\b(\d{1,2})[/.-](\d{1,2})[/.-](20\d{2})\b")
+DATE_TXT_RE = re.compile(r"\b(\d{1,2})(?:er)? (janvier|fevrier|mars|avril|mai|juin|juillet|aout|septembre|octobre|novembre|decembre) (20\d{2})\b")
+
+
+def _dates_dans(texte):
+    """Dates trouvees dans un texte (deja normalise), sous forme de date()."""
+    out = []
+    for j, m, a in DATE_NUM_RE.findall(texte):
+        try:
+            out.append(date(int(a), int(m), int(j)))
+        except ValueError:
+            pass
+    for j, m, a in DATE_TXT_RE.findall(texte):
+        try:
+            out.append(date(int(a), MOIS_FR[m], int(j)))
+        except ValueError:
+            pass
+    return out
+
+
+def _liens_page(page_html, base_url):
+    """-> [(texte_du_lien, url_absolue, texte_autour)] pour chaque lien de la page."""
+    from html.parser import HTMLParser
+    from urllib.parse import urljoin
+
+    class P(HTMLParser):
+        def __init__(self):
+            super().__init__(convert_charrefs=True)
+            self.liens, self.en_cours, self.textes = [], None, []
+            self.lignes = [0]
+            for ligne in page_html.splitlines(keepends=True):
+                self.lignes.append(self.lignes[-1] + len(ligne))
+
+        def pos(self):
+            l, c = self.getpos()
+            return self.lignes[l - 1] + c
+
+        def handle_starttag(self, tag, attrs):
+            if tag == "a":
+                d = dict(attrs)
+                if d.get("href") and not d["href"].startswith(("#", "mailto:", "tel:", "javascript:")):
+                    self.en_cours = [d["href"], [d.get("title") or ""], self.pos()]
+
+        def handle_data(self, data):
+            if self.en_cours:
+                self.en_cours[1].append(data)
+
+        def handle_endtag(self, tag):
+            if tag == "a" and self.en_cours:
+                href, morceaux, debut = self.en_cours
+                self.liens.append((" ".join(" ".join(morceaux).split()), urljoin(base_url, href), debut))
+                self.en_cours = None
+
+    p = P()
+    try:
+        p.feed(page_html)
+    except Exception:
+        pass
+    out = []
+    bas = page_html.lower()
+    for texte, url, debut in p.liens:
+        out.append((texte, url, nettoyer(_bloc_autour(page_html, bas, debut))))
+    return out
+
+
+def _bloc_autour(page_html, bas, debut):
+    """Texte de l'element qui contient le lien (ligne de liste, de tableau, article...),
+    pour y lire les dates sans deborder sur les annonces voisines."""
+    for ouvrante, fermante in (("<li", "</li"), ("<tr", "</tr"), ("<article", "</article"), ("<div", "</div")):
+        i = bas.rfind(ouvrante, max(0, debut - 1500), debut + 1)
+        if i == -1:
+            continue
+        j = bas.find(fermante, debut)
+        if j != -1 and j - debut < 2000:
+            return page_html[i:j]
+    return page_html[max(0, debut - 300): debut + 300]
+
+
+def _autorise(url) -> bool:
+    """Respecte le fichier robots.txt du site (en cas de doute, on autorise)."""
+    from urllib import robotparser
+    from urllib.parse import urlsplit
+    sp = urlsplit(url)
+    try:
+        r = requests.get(f"{sp.scheme}://{sp.netloc}/robots.txt", headers=HEADERS, timeout=10)
+        if r.status_code >= 400:
+            return True
+        rp = robotparser.RobotFileParser()
+        rp.parse(r.text.splitlines())
+        return rp.can_fetch(HEADERS["User-Agent"], url)
+    except requests.RequestException:
+        return True
+
+
+def source_sites(jours: int):
+    if not SITES_A_SURVEILLER:
+        return []
+    limite = date.today() - timedelta(days=jours)
+    out, erreurs = {}, []
+    for site in SITES_A_SURVEILLER:
+        nom, url = site["nom"], site["url"]
+        try:
+            if not _autorise(url):
+                erreurs.append(f"{nom} (robots.txt)")
+                continue
+            r = requests.get(url, headers=HEADERS, timeout=TIMEOUT)
+            r.raise_for_status()
+            r.encoding = r.apparent_encoding or r.encoding
+        except Exception as e:
+            erreurs.append(nom)
+            print(f"  [SITES] {nom} : page inaccessible ({str(e)[:80]})", file=sys.stderr)
+            continue
+        trouves = 0
+        for texte, lien, autour in _liens_page(r.text, url):
+            if len(texte) < 12:
+                continue
+            nt = normaliser(texte)
+            na = normaliser(autour)
+            if not any(m in nt or m in normaliser(lien) for m in MOTS_CONSULTATION):
+                # le lien seul n'en parle pas : on accepte s'il est tres pertinent et que le bloc parle de consultation
+                if not (scorer(texte) >= 6 and any(m in na for m in MOTS_CONSULTATION)):
+                    continue
+            # Dates autour du lien : une date passee = publication, une date future = date limite
+            dates = _dates_dans(nt) or _dates_dans(na)
+            passees = [d for d in dates if d <= date.today()]
+            futures = [d for d in dates if d > date.today()]
+            publie = max(passees).isoformat() if passees else ""
+            echeance = min(futures).isoformat() if futures else ""
+            if publie and not echeance and date.fromisoformat(publie) < limite:
+                continue  # annonce ancienne, sans date limite a venir
+            a = annonce("SITES", lien, texte, nom, publie, echeance, lien)
+            if a["score"] > 0:
+                a["bonus"] = BONUS_SITE
+                calculer_score(a)
+            a["depot"] = lien
+            out[a["id"]] = a
+            trouves += 1
+        print(f"  [SITES] {nom} : {trouves} lien(s) de consultation")
+    if erreurs and len(erreurs) == len(SITES_A_SURVEILLER):
+        raise RuntimeError("aucun site accessible : " + ", ".join(erreurs))
+    if erreurs:
+        AVERTISSEMENTS.append(f"sites en erreur : {', '.join(erreurs)}")
+    return list(out.values())
+
+
+# ---- Signaux marques (actualite Google News) ------------------------------
+def source_signaux(jours: int):
+    if not MARQUES_A_SUIVRE:
+        return []
+    if not feedparser:
+        raise RuntimeError("feedparser non installe (pip install feedparser)")
+    import time
+    from urllib.parse import urlencode
+    limite = (date.today() - timedelta(days=jours)).isoformat()
+    out, erreurs = {}, 0
+    for m in MARQUES_A_SUIVRE:
+        marque = m["marque"]
+        groupe = m.get("type") == "groupe"
+        requete = SIGNAUX_REQUETE_GROUPE if groupe else SIGNAUX_REQUETE
+        poids = MOTS_SIGNAUX_GROUPE if groupe else MOTS_SIGNAUX
+        q = f'"{marque}"' + (f" ({m['precision']})" if m.get("precision") else "") + f" ({requete}) when:{jours}d"
+        url = "https://news.google.com/rss/search?" + urlencode({"q": q, "hl": "fr", "gl": "FR", "ceid": "FR:fr"})
+        try:
+            entrees = _entrees_flux(url)
+        except Exception as e:
+            erreurs += 1
+            print(f"  [SIGNAUX] {marque} : flux ignore ({str(e)[:60]})", file=sys.stderr)
+            continue
+        nm = normaliser(marque)
+        for e in entrees:
+            titre = e.get("title", "")
+            if nm not in normaliser(titre):
+                continue  # la marque doit etre dans le titre (evite les mentions en passant)
+            pub = ""
+            if e.get("published_parsed"):
+                pub = datetime(*e.get("published_parsed")[:6]).date().isoformat()
+            if pub and pub < limite:
+                continue
+            texte = normaliser(f"{titre} {e.get('summary', '')}")
+            detail = sorted(([k, p, "t"] for k, p in poids.items() if k in texte), key=lambda x: -x[1])
+            if not detail or (groupe and sum(p for _, p, _ in detail) < SEUIL_GROUPE):
+                continue
+            media = (e.get("source") or {}).get("title", "") if isinstance(e.get("source"), dict) else ""
+            if not media and " - " in titre:
+                media = titre.rsplit(" - ", 1)[-1]
+            a = annonce("SIGNAUX", e.get("link"), titre, marque, pub, "", e.get("link"), e.get("summary", ""))
+            a["detail"], a["score"], a["exclu"] = detail, sum(p for _, p, _ in detail), ""
+            a["themes"] = "Signal groupe" if groupe else "Signal marque"
+            a["procedure"] = f"Actualité ({media})" if media else "Actualité"
+            out[a["id"]] = a
+        time.sleep(1)  # politesse envers Google News
+    if erreurs == len(MARQUES_A_SUIVRE):
+        raise RuntimeError("aucun flux accessible")
+    return list(out.values())
+
+
 def source_presse(jours: int):
     if not feedparser:
         raise RuntimeError("feedparser non installe (pip install feedparser)")
@@ -741,6 +1059,7 @@ def marquer_nouveaux(annonces):
 
 
 SOURCES_STATUS = []
+AVERTISSEMENTS = []
 ENTONNOIR = []
 COLS = ["nouveau", "score", "explication", "themes", "source", "titre", "acheteur",
         "departement", "procedure", "montant", "publie", "echeance", "url", "depot",
@@ -1027,7 +1346,7 @@ if (typeof document !== "undefined") {
         <td class="c0">${etoile(a)}${a.nouveau ? '<span class="tag">NEW</span>' : ""}</td>
         <td><span class="pill ${pillClass(a.score)}">${a.score}</span></td>
         <td>${tags}</td><td><span class="tag">${esc(a.source)}</span>${(a.aussi || []).map(x => `<span class="tag" title="Aussi publié sur ${esc(x.source)}">+${esc(x.source)}</span>`).join("")}</td>
-        <td><a href="${esc(a.url)}" target="_blank" rel="noopener">${esc(a.titre)}</a>${a.depot ? `<br><a class="dep" href="${esc(a.depot)}" target="_blank" rel="noopener">Déposer sur ${esc(hote(a.depot))}</a>` : ""}</td>
+        <td><a href="${esc(a.url)}" target="_blank" rel="noopener">${esc(a.titre)}</a>${a.depot && a.depot !== a.url ? `<br><a class="dep" href="${esc(a.depot)}" target="_blank" rel="noopener">Déposer sur ${esc(hote(a.depot))}</a>` : ""}</td>
         <td>${esc(a.acheteur)}</td><td>${esc(a.publie)}</td><td class="${cls}">${ech}</td></tr>`;
     }).join("");
     $("empty").hidden = current.length > 0;
@@ -1078,7 +1397,7 @@ if (typeof document !== "undefined") {
 
   function popHTML(a) {
     const infos = [
-      ["Département", a.departement], ["Procédure", a.procedure], ["Montant estimé", a.montant],
+      ["Département", a.departement], [a.source === "SIGNAUX" ? "Source" : "Procédure", a.procedure], ["Montant estimé", a.montant],
       ["Publiée", a.publie], ["Repérée le", a.vu_le],
       ["Date limite", a.echeance ? a.echeance + (daysBetween(today, a.echeance) >= 0 ? ` (J-${daysBetween(today, a.echeance)})` : "") : ""]
     ].filter(([, v]) => v).map(([k, v]) => `<dt>${k}</dt><dd>${esc(v)}</dd>`).join("")
@@ -1093,9 +1412,9 @@ if (typeof document !== "undefined") {
     const c = a.contact || {};
     let depot = "";
     if (a.depot) {
-      depot = `<a class="go" href="${esc(a.depot)}" target="_blank" rel="noopener">Dossier et dépôt sur ${esc(hote(a.depot))}</a>
+      depot = `<a class="go" href="${esc(a.depot)}" target="_blank" rel="noopener">${a.source === "SITES" ? "Voir la consultation sur " : "Dossier et dépôt sur "}${esc(hote(a.depot))}</a>
         <p class="go-note" style="margin-bottom:6px">Les questions sur le contenu se posent aussi sur cette plateforme.</p>`;
-    } else if (a.source !== "PRESSE") {
+    } else if (a.source === "BOAMP" || a.source === "TED") {
       depot = `<p class="go-note warn">Lien de dépôt non trouvé : cherchez « profil d’acheteur » ou « adresse de présentation » dans l’avis.</p>`;
     }
     const contact = (c.mail || c.tel || c.nom) ? `<div class="blk"><div class="blk-h">Contact</div><dl class="ct">
@@ -1105,9 +1424,10 @@ if (typeof document !== "undefined") {
       </dl>${a.depot ? `<p class="hint" style="margin-top:6px">Pour les renseignements administratifs.</p>` : ""}</div>` : "";
     const lots = (a.lots || []).length ? `<div class="blk"><div class="blk-h">${a.lots.length} lot${a.lots.length > 1 ? "s" : ""}</div>
       ${a.lots.map(l => `<div class="lot"><b>Lot ${esc(l.num)}</b><span>${esc(l.titre)}</span><span>${l.max ? esc(l.max) + " max" : esc(l.estime || "")}</span></div>`).join("")}</div>` : "";
+    if (a.source === "SIGNAUX") depot = `<p class="go-note">Signal d’actualité, pas un appel d’offres : une piste de prospection à creuser.</p>`;
     return `<h3>${esc(a.titre)}</h3>
       <p class="who">${esc(a.acheteur || "Acheteur non renseigné")} – ${esc(a.source)}</p>
-      ${depot}<a class="go2" href="${esc(a.url)}" target="_blank" rel="noopener">Voir l’avis complet (${esc(a.source)})</a>${desc}${infos ? `<dl>${infos}</dl>` : ""}${lots}${contact}
+      ${depot}<a class="go2" href="${esc(a.url)}" target="_blank" rel="noopener">${a.source === "SIGNAUX" ? "Lire l’article" : `Voir l’avis complet (${esc(a.source)})`}</a>${desc}${infos ? `<dl>${infos}</dl>` : ""}${lots}${contact}
       <div class="why blk"><div class="why-h">Pourquoi ce score <span class="pill ${pillClass(a.score)}">${a.score}</span></div>${why}</div>
 `;
   }
@@ -1224,7 +1544,8 @@ def main():
     args = p.parse_args()
 
     toutes = []
-    for nom, fn in [("BOAMP", source_boamp), ("TED", source_ted), ("PRESSE", source_presse)]:
+    for nom, fn in [("BOAMP", source_boamp), ("TED", source_ted), ("PRESSE", source_presse),
+                    ("SITES", source_sites), ("SIGNAUX", source_signaux)]:
         try:
             res = fn(args.jours)
             print(f"[{nom}] {len(res)} annonces recuperees")
@@ -1243,6 +1564,12 @@ def main():
     ENTONNOIR.append(f"{len(retenues)} retenues (score {SCORE_MINI}+ et encore ouvertes)")
     print("Tri : " + " -> ".join(ENTONNOIR))
     marquer_nouveaux(retenues)
+    # Liens de sites sans date : on ne les garde que pendant la periode de veille
+    seuil = (date.today() - timedelta(days=args.jours)).isoformat()
+    retenues = [a for a in retenues if not (a["source"] == "SITES" and not a["publie"]
+                                            and not a["echeance"] and a["vu_le"] < seuil)]
+    for w in AVERTISSEMENTS:
+        SOURCES_STATUS.append(w)
     if args.nouveaux:
         retenues = [a for a in retenues if a["nouveau"]]
     retenues.sort(key=lambda a: (-a["score"], a["echeance"] or "9999"))
