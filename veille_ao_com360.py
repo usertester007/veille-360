@@ -86,6 +86,13 @@ FAMILLES = {
         "portail web": 7, "portail internet": 7, "developpement web": 7, "ux design": 7,
         "ui design": 7, "site internet": 6, "site web": 6, "sites internet": 6, "sites web": 6,
         "experience utilisateur": 5, "plateforme web": 5, "wordpress": 5, "drupal": 5,
+        # plateformes et experiences interactives (vocabulaire TED / projets europeens)
+        "sites www": 8, "plateforme numerique": 7, "plateforme interactive": 7,
+        "plateforme en ligne": 6, "application web": 7, "applications web": 7,
+        "application mobile": 6, "site interactif": 7, "experience interactive": 7,
+        "experience numerique": 6, "datavisualisation": 6, "visualisation de donnees": 6,
+        "dataviz": 6, "data visualisation": 6, "integration des contenus": 4,
+        "integration de contenus": 4, "front-end": 5, "interactive": 3, "interactif": 3,
         "refonte": 2, "cms": 3, "ergonomie": 2, "accessibilite numerique": 2, "rgaa": 2,
     },
     "Social / influence": {
@@ -103,8 +110,10 @@ BONUS_MULTI_MAX = 6    # au plus 2 familles supplementaires
 EXTRA_PAR_MOT = 1      # par mot-cle supplementaire d'une meme famille
 EXTRA_MAX = 3
 # Un site + un verbe de projet, meme separes ("Conception et developpement du site web")
-PROJET_SITE_RE = re.compile(r"\b(sites? (internet|web)|portail|site institutionnel)\b")
-PROJET_VERBE_RE = re.compile(r"\b(refonte|creation|conception|realisation|developpement|nouveau|nouvelle version|modernisation|evolution)\b")
+PROJET_SITE_RE = re.compile(r"\b(sites? (internet|web|www)|portail|site institutionnel|"
+                            r"plateformes? (numerique|web|interactive|en ligne)|applications? (web|mobile))\b")
+PROJET_VERBE_RE = re.compile(r"\b(refonte|creation|conception|realisation|developpement|nouveau|nouvelle version|"
+                             r"modernisation|evolution|deploiement)\b")
 
 # Liste a plat (utilisee pour la recherche des mots-cles dans les textes)
 MOTS_CLES = {m: p for fam in FAMILLES.values() for m, p in fam.items()}
@@ -116,6 +125,8 @@ MOTS_EXCLUS = [
     "maintenance", "nettoyage", "gmao", "videosurveillance", "video-surveillance",
     "videoprotection", "visioconference", "telecommunication", "communications electroniques",
     "location de", "fourniture de", "travaux de", "securite incendie",
+    # informatique pure (plateformes techniques, pas de la communication)
+    "infogerance", "progiciel", "tierce maintenance", "licences logicielles", "hebergement et infogerance",
     # faux amis de la photo
     "photocopi", "photovolta", "orthophoto", "photogrammetr", "photo d'identite", "photomaton",
 ]
