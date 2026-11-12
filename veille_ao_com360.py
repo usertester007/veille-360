@@ -40,50 +40,76 @@ except ImportError:  # RSS optionnel
 # --------------------------------------------------------------------------
 # CONFIG - a adapter
 # --------------------------------------------------------------------------
-# Mots-cles avec poids (profil : agence creative 360 - strategie de marque,
-# branding, campagnes, video, digital/site, social media, influence).
-MOTS_CLES = {
-    # 360 / agence
-    "communication 360": 10, "agence 360": 10, "agence conseil en communication": 8,
-    "agence de communication": 7, "agence creative": 7, "agence de publicite": 7,
-    "campagne de communication": 8, "campagne publicitaire": 8, "campagne de publicite": 8,
-    "strategie de communication": 7, "conseil en communication": 6,
-    "plan de communication": 6, "communication globale": 6,
-    # marque / branding
-    "strategie de marque": 8, "plateforme de marque": 8, "branding": 7,
-    "identite de marque": 7, "identite visuelle": 6, "rebranding": 7,
-    "image de marque": 5, "marque employeur": 5, "charte graphique": 5,
-    "creation de marque": 6, "positionnement de marque": 6, "creation graphique": 4,
-    # video / contenus
-    "production video": 7, "production audiovisuelle": 7, "film institutionnel": 7, "films institutionnels": 7, "films publicitaires": 8,
-    "production de films": 7, "realisation de films": 7, "contenus video": 5,
-    "film publicitaire": 8, "motion design": 5, "podcast": 4, "video": 3, "film": 2,
-    "contenus editoriaux": 4, "creation de contenus": 4,
-    # photo
-    # ("reportage photo" couvre aussi "reportage photographique")
-    "reportage photo": 6, "reportages photo": 6, "photographe": 5, "shooting": 5,
-    "photographique": 4, "photographie": 4, "prise de vue": 4, "prises de vue": 4,
-    "prises de vues": 4, "phototheque": 3, "banque d'images": 3, "photos": 2,
-    # digital / site
-    "refonte du site": 6, "refonte de site": 6, "refonte site": 6, "refonte des sites": 6,
-    "refonte": 2, "creation de site": 5, "creation d'un site": 5, "creation du site": 5,
-    "conception de site": 5, "conception d'un site": 5, "conception du site": 5,
-    "realisation d'un site": 5, "realisation du site": 5, "developpement du site": 4,
-    "developpement d'un site": 4, "nouveau site": 4, "site institutionnel": 5,
-    "site vitrine": 5, "site e-commerce": 4, "portail web": 4, "portail internet": 4,
-    "plateforme web": 3, "developpement web": 4, "webdesign": 5, "web design": 5,
-    "ux design": 4, "ui design": 4, "experience utilisateur": 3, "ergonomie": 2,
-    "wordpress": 3, "drupal": 3, "cms": 2,
-    "site internet": 4, "site web": 4, "sites internet": 4, "sites web": 4,
-    "accessibilite numerique": 2, "rgaa": 2,
-    "marketing digital": 4, "strategie digitale": 5,
-    # social / influence
-    "reseaux sociaux": 4, "social media": 4, "community management": 4,
-    "influence": 4, "influenceur": 4, "tiktok": 3, "instagram": 2,
-    # autres leviers
-    "publicite": 3, "relations presse": 3, "evenementiel": 2, "activation": 2,
-    "marketing": 2, "notoriete": 3, "lancement de": 1,
+# --------------------------------------------------------------------------
+# NOTATION PAR FAMILLES DE METIERS
+# Pour chaque famille presente dans le titre :
+#   points = mot-cle le plus fort de la famille
+#          + 1 point par autre mot-cle de la meme famille (au plus +3)
+# Puis BONUS_MULTI points par famille supplementaire (projet multi-disciplines = 360).
+# Ainsi un titre bavard ("films institutionnels, production de films, film...")
+# ne cumule plus des dizaines de points, et chaque metier pese a armes egales.
+# --------------------------------------------------------------------------
+FAMILLES = {
+    "360 / campagne": {
+        "communication 360": 10, "agence 360": 10, "agence conseil en communication": 9,
+        "campagne de communication": 9, "campagnes de communication": 9,
+        "campagne publicitaire": 9, "campagnes publicitaires": 9, "campagne de publicite": 9,
+        "strategie de communication": 8, "agence de communication": 8, "agence creative": 8,
+        "agence de publicite": 8, "conseil en communication": 7, "plan de communication": 7,
+        "communication globale": 7, "strategie digitale": 6, "marketing digital": 5,
+        "publicite": 3, "publicitaire": 3, "notoriete": 3, "marketing": 2, "lancement de": 1,
+    },
+    "Marque / branding": {
+        "strategie de marque": 9, "plateforme de marque": 9, "identite de marque": 8,
+        "branding": 8, "rebranding": 8, "identite visuelle": 8, "creation de marque": 7,
+        "positionnement de marque": 7, "image de marque": 6, "marque employeur": 6,
+        "charte graphique": 6, "creation graphique": 5, "logo": 3,
+    },
+    "Video / photo": {
+        "film publicitaire": 9, "films publicitaires": 9, "production video": 8,
+        "production audiovisuelle": 8, "film institutionnel": 8, "films institutionnels": 8,
+        "production de films": 8, "realisation de films": 8, "reportage photo": 8,
+        "reportages photo": 8, "contenus video": 7, "motion design": 7, "photographe": 7,
+        "shooting": 7, "photographique": 6, "photographie": 6, "prise de vue": 6,
+        "prises de vue": 6, "prises de vues": 6, "podcast": 5, "video": 4,
+        "phototheque": 4, "banque d'images": 4, "film": 3, "photos": 3,
+    },
+    "Site / digital": {
+        # "projet de site web" est detecte par une regle (voir PROJET_SITE_RE) : site + verbe de projet
+        "projet de site web": 9,
+        "refonte du site": 9, "refonte de site": 9, "refonte site": 9, "refonte des sites": 9,
+        "creation de site": 9, "creation d'un site": 9, "creation du site": 9,
+        "conception de site": 9, "conception d'un site": 9, "conception du site": 9,
+        "realisation d'un site": 9, "realisation du site": 9, "site institutionnel": 8,
+        "site vitrine": 8, "webdesign": 8, "web design": 8, "developpement du site": 7,
+        "developpement d'un site": 7, "nouveau site": 7, "site e-commerce": 7,
+        "portail web": 7, "portail internet": 7, "developpement web": 7, "ux design": 7,
+        "ui design": 7, "site internet": 6, "site web": 6, "sites internet": 6, "sites web": 6,
+        "experience utilisateur": 5, "plateforme web": 5, "wordpress": 5, "drupal": 5,
+        "refonte": 2, "cms": 3, "ergonomie": 2, "accessibilite numerique": 2, "rgaa": 2,
+    },
+    "Social / influence": {
+        "community management": 8, "social media": 8, "reseaux sociaux": 7, "influence": 7,
+        "influenceur": 7, "influenceurs": 7, "creation de contenus": 6, "contenus editoriaux": 6,
+        "tiktok": 4, "instagram": 3, "linkedin": 3,
+    },
+    "Pub / RP / event": {
+        "relations presse": 7, "relations medias": 7, "evenementiel": 6, "activation": 4,
+        "salon": 2,
+    },
 }
+BONUS_MULTI = 3        # par famille supplementaire presente dans le titre
+BONUS_MULTI_MAX = 6    # au plus 2 familles supplementaires
+EXTRA_PAR_MOT = 1      # par mot-cle supplementaire d'une meme famille
+EXTRA_MAX = 3
+# Un site + un verbe de projet, meme separes ("Conception et developpement du site web")
+PROJET_SITE_RE = re.compile(r"\b(sites? (internet|web)|portail|site institutionnel)\b")
+PROJET_VERBE_RE = re.compile(r"\b(refonte|creation|conception|realisation|developpement|nouveau|nouvelle version|modernisation|evolution)\b")
+
+# Liste a plat (utilisee pour la recherche des mots-cles dans les textes)
+MOTS_CLES = {m: p for fam in FAMILLES.values() for m, p in fam.items()}
+FAMILLE_DE = {m: f for f, fam in FAMILLES.items() for m in fam}
+
 # Mots qui disqualifient (bruit frequent)
 MOTS_EXCLUS = [
     "achat d'espace seul", "centre d'appels", "teleconseiller", "sondage",
@@ -115,7 +141,7 @@ THEMES = {
 # Mots-cles trouves seulement dans la description detaillee : poids reduit et plafonne
 # (les descriptions sont longues et contiennent souvent du texte standard)
 COEF_DESCRIPTION = 0.5
-PLAFOND_DESCRIPTION = 15
+PLAFOND_DESCRIPTION = 8
 TED_PAGES_MAX = 20  # 100 avis par page
 
 BONUS_PRESSE = 6  # ajoute aux articles de presse qui annoncent une competition
@@ -259,15 +285,39 @@ def normaliser(txt: str) -> str:
     return re.sub(r"\s+", " ", txt.lower()).strip()
 
 
+def mots_trouves(t: str):
+    """Mots-cles presents dans un texte normalise -> {famille: [(mot, poids), ...] tries}."""
+    par_famille = {}
+    for mot, poids in MOTS_CLES.items():
+        if mot != "projet de site web" and mot in t:
+            par_famille.setdefault(FAMILLE_DE[mot], []).append((mot, poids))
+    if PROJET_SITE_RE.search(t) and PROJET_VERBE_RE.search(t):
+        par_famille.setdefault("Site / digital", []).append(("projet de site web", MOTS_CLES["projet de site web"]))
+    # on retire les mots inclus dans un mot plus long deja trouve ("film" dans "film publicitaire")
+    for fam, mots in par_famille.items():
+        mots = [(m, p) for m, p in mots if not any(m != m2 and m in m2 for m2, _ in mots)]
+        par_famille[fam] = sorted(mots, key=lambda x: -x[1])
+    return par_famille
+
+
+def points_famille(mots):
+    """Mot le plus fort + 1 point par mot supplementaire (plafonne)."""
+    return mots[0][1] + min(EXTRA_MAX, EXTRA_PAR_MOT * (len(mots) - 1))
+
+
 def analyser_score(texte: str, exclusions: bool = True):
-    """Renvoie (score, [[mot, poids], ...] tries par poids, mot_exclu)."""
+    """Renvoie (score, detail, mot_exclu). detail = [[libelle, points], ...]."""
     t = normaliser(texte)
     exclu = next((m for m in MOTS_EXCLUS if m in t
                   and not any(x in t for x in EXCLUS_SAUF_SI.get(m, []))), "") if exclusions else ""
     if exclu:
         return 0, [], exclu
-    detail = sorted(([mot, poids] for mot, poids in MOTS_CLES.items() if mot in t),
-                    key=lambda x: -x[1])
+    par_famille = mots_trouves(t)
+    detail = sorted(([f"{fam} : {', '.join(m for m, _ in mots)}", points_famille(mots)]
+                     for fam, mots in par_famille.items()), key=lambda x: -x[1])
+    if len(detail) > 1:
+        detail.append([f"bonus multi-métiers ({len(detail)} familles)",
+                       min(BONUS_MULTI_MAX, BONUS_MULTI * (len(detail) - 1))])
     return sum(p for _, p in detail), detail, ""
 
 
@@ -276,9 +326,9 @@ def scorer(texte: str) -> int:
 
 
 def calculer_score(a):
-    """Score = mots-cles du titre (+ descripteurs) a plein poids
-             + mots-cles supplementaires de la description (poids reduit, plafonne)
-             + bonus eventuel (presse).
+    """Score = familles de metiers trouvees dans le titre (+ descripteurs)
+             + familles trouvees SEULEMENT dans la description (a mi-poids, plafonne)
+             + bonus eventuel (presse, site surveille).
     Les mots exclus ne sont cherches que dans le titre : les descriptions
     contiennent trop de texte standard ("fourniture de", "maintenance"...)."""
     principal = f"{a['titre']} {a['_extrait']}"
@@ -288,14 +338,14 @@ def calculer_score(a):
         a.update(score=0, detail=[], exclu=exclu)
         return a
     detail = [[m, p, "t"] for m, p in detail]
-    vus = {m for m, _, _ in detail}
     if a["_desc"]:
+        deja = set(mots_trouves(normaliser(principal)))
         reste = PLAFOND_DESCRIPTION
-        for m, p in analyser_score(a["_desc"], exclusions=False)[1]:
-            if m in vus or reste <= 0:
+        for fam, mots in sorted(mots_trouves(normaliser(a["_desc"])).items(), key=lambda x: -x[1][0][1]):
+            if fam in deja or reste <= 0:
                 continue
-            pd = min(reste, max(1, round(p * COEF_DESCRIPTION)))
-            detail.append([m, pd, "d"])
+            pd = min(reste, max(1, round(points_famille(mots) * COEF_DESCRIPTION)))
+            detail.append([f"{fam} : {', '.join(m for m, _ in mots[:3])}", pd, "d"])
             reste -= pd
     a.update(score=sum(p for _, p, _ in detail) + a["bonus"], detail=detail, exclu="")
     return a
